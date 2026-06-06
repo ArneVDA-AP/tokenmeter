@@ -41,14 +41,29 @@ along from mobile.
 - Added `LICENSE` (was missing) preserving the original author's MIT copyright.
 - Repointed README to the fork; credited the original project.
 
-### 🔜 Phase 2 — lugia19 web-UI integration (next)
+### 🟡 Phase 2 — lugia19 web-UI integration (data layer + scaffolding done; needs on-machine wiring)
 - Vendored the extension at `vendor/claude-usage-extension/` (GPL-3.0 — see
   `vendor/README.md` for the licensing boundary).
-- Plan: a GPL fork of the extension adds a small "mirror" module that pushes its
-  `browser.storage.local` snapshot over **Native Messaging** to a tiny local host,
-  which writes `web-usage.json`. Tokenmeter reads that as a third source (MIT side
-  never imports GPL code — separate process boundary).
-- Needs a short on-machine spike (Zen profile path, extension id) before building.
+- **Studied the extension's storage**: usage = `getPopupUsageData()` (per-org limits,
+  tier, credits via the live API); per-conversation stats in the `conversationCache`
+  StoredMap. Defined the `web-usage.json` contract from these.
+- **Built & tested (headless)**:
+  - `src/webusage-parser.js` — reads `web-usage.json`, normalizes limits + conversation
+    aggregates; graceful when missing/stale/corrupt. (`test/webusage.test.js`)
+  - `src/scanner.js` — now returns `data.web` as a third source (behind a `webPath`
+    setting, defaults to `%APPDATA%\Tokenmeter\web-usage.json`).
+  - `integration/native-host/` — native-messaging host + pure transform + Windows
+    launcher + manifest template. (`test/integration-transform.test.js` proves the
+    mirror→host→parser contract end to end.)
+  - `integration/extension-mirror/mirror.js` — GPL module for the forked extension.
+- **Remaining (needs the PC)**: fork+load the extension in Zen, wire the mirror, install
+  the native host (registry + manifest path), verify `web-usage.json` appears. Then build
+  the Tokenmeter UI surface for `data.web`. Full checklist in `integration/README.md`.
+
+## Tests
+- `npm test` — parser + web-usage + integration-transform unit tests (headless).
+- `npm run test:ui` — Electron UI smoke test (run under `xvfb-run -a`).
+- `npm run screenshots` — regenerate `test/shots/*.png`.
 
 ## How to run locally (Windows)
 ```

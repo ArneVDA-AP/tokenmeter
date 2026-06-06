@@ -232,6 +232,38 @@
     <div id="se-empty" class="tmux-empty" style="display:none">no sessions match.</div>
   </div><!-- /page-sessions -->
 
+  <!-- PAGE: Web (claude.ai usage via the Claude Usage extension) -->
+  <div class="page" id="page-web">
+    <div class="page-header">
+      <div class="page-title" style="color:var(--orange)">Web Usage</div>
+      <div class="page-subtitle" id="web-header-sub">claude.ai · via Claude Usage extension</div>
+    </div>
+
+    <!-- Not-configured / empty state -->
+    <div id="web-empty" class="not-detected-note" style="display:none"></div>
+
+    <!-- Connected content -->
+    <div id="web-content" style="display:none">
+      <div class="web-org-row">
+        <div class="web-org-name" id="web-org-name">—</div>
+        <div class="web-tier" id="web-tier">—</div>
+      </div>
+
+      <div class="section-heading">Usage Limits</div>
+      <div id="web-limits" class="web-limits"></div>
+
+      <div class="section-heading">Top Conversations</div>
+      <div class="chart-container" style="padding:0;overflow:hidden">
+        <table class="breakdown-table">
+          <thead><tr><th>Conversation</th><th>Model</th><th>Tokens</th><th title="extension weighted token-cost">Weight</th><th>Cache</th></tr></thead>
+          <tbody id="web-convos"></tbody>
+        </table>
+      </div>
+
+      <div id="web-stale" class="not-detected-note" style="display:none"></div>
+    </div>
+  </div><!-- /page-web -->
+
 </div><!-- /main-content -->
 
 <!-- Status Strip -->
@@ -245,6 +277,7 @@
   <button class="nav-tab active" data-page="overview">Overview</button>
   <button class="nav-tab"        data-page="claude">Claude Code</button>
   <button class="nav-tab"        data-page="sessions">Sessions</button>
+  <button class="nav-tab"        data-page="web">Web</button>
 </nav>
 
 <!-- Settings Modal -->

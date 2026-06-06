@@ -63,4 +63,32 @@ function gen(claudeProjectsDir, opts = {}) {
   }
 }
 
-module.exports = { gen };
+// Write a realistic web-usage.json snapshot (the contract Tokenmeter reads).
+function genWebUsage(filePath, opts = {}) {
+  const now = opts.now || Date.now();
+  const H = 3600000, D = 86400000;
+  const snapshot = {
+    schemaVersion: 1,
+    generatedAt: now - 4 * 60000,
+    source: 'claude-usage-extension-mirror',
+    orgs: [{
+      orgId: 'org-personal', orgName: 'Personal', subscriptionTier: 'claude_max_20x',
+      limits: {
+        session: { percentage: 47, resetsAt: now + 2 * H },
+        weekly: { percentage: 68, resetsAt: now + 4 * D },
+        sonnetWeekly: { percentage: 52, resetsAt: now + 4 * D },
+        opusWeekly: { percentage: 93, resetsAt: now + 4 * D },
+      },
+      extraUsage: { isEnabled: true, monthlyLimit: 5000, usedCredits: 1800 },
+      creditBalance: 7200,
+    }],
+    conversations: [
+      { conversationId: 'a1b2c3d4e5', model: 'claude-opus-4', length: 142000, cost: 5200, uncachedCost: 8100, conversationIsCachedUntil: now + 9 * 60000, lastMessageTimestamp: now - 30 * 60000, orgId: 'org-personal' },
+      { conversationId: 'f6g7h8i9j0', model: 'claude-sonnet-4', length: 64000, cost: 1400, uncachedCost: 2100, conversationIsCachedUntil: null, lastMessageTimestamp: now - 3 * H, orgId: 'org-personal' },
+      { conversationId: 'k1l2m3n4o5', model: 'claude-opus-4', length: 38000, cost: 900, uncachedCost: 1300, conversationIsCachedUntil: now + 4 * 60000, lastMessageTimestamp: now - 5 * H, orgId: 'org-personal' },
+    ],
+  };
+  require('fs').writeFileSync(filePath, JSON.stringify(snapshot));
+}
+
+module.exports = { gen, genWebUsage };

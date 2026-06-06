@@ -56,9 +56,13 @@ along from mobile.
     launcher + manifest template. (`test/integration-transform.test.js` proves the
     mirror→host→parser contract end to end.)
   - `integration/extension-mirror/mirror.js` — GPL module for the forked extension.
+- **Web UI built & tested**: a new **Web** tab renders the primary org's limit gauges
+  (session/weekly/sonnet/opus, with an over-90% warn colour), tier badge, and top
+  conversations. Shows a clear "not configured" empty state until the mirror is wired.
+  Verified via fixtures in the UI smoke test + screenshot (`docs/screenshots/web.png`).
 - **Remaining (needs the PC)**: fork+load the extension in Zen, wire the mirror, install
-  the native host (registry + manifest path), verify `web-usage.json` appears. Then build
-  the Tokenmeter UI surface for `data.web`. Full checklist in `integration/README.md`.
+  the native host (registry + manifest path), verify `web-usage.json` appears — then the
+  Web tab lights up with real data. Full checklist in `integration/README.md`.
 
 ## Tests
 - `npm test` — parser + web-usage + integration-transform unit tests (headless).

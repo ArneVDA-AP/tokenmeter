@@ -12,7 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { scan } = require('../src/scanner');
-const { gen } = require('./lib/genFixtures');
+const { gen, genWebUsage } = require('./lib/genFixtures');
 
 app.commandLine.appendSwitch('no-sandbox');
 
@@ -21,10 +21,12 @@ const fixHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-uifix-'));
 const claudeProjects = path.join(fixHome, '.claude', 'projects');
 fs.mkdirSync(claudeProjects, { recursive: true });
 gen(claudeProjects);
+const webUsageFile = path.join(fixHome, 'web-usage.json');
+genWebUsage(webUsageFile);
 
 const settings = {
   refreshInterval: 0, lookbackDays: 14,
-  claudePath: claudeProjects, geminiPath: '',
+  claudePath: claudeProjects, geminiPath: '', webPath: webUsageFile,
   idleTimeout: 0, dailyCostAlert: 0,
 };
 
@@ -66,6 +68,7 @@ app.whenReady().then(async () => {
   await go('overview'); await wait(800); await shot('1-overview');
   await go('claude');   await wait(1100); await shot('2-claude');
   await go('sessions'); await wait(800); await shot('3-sessions');
+  await go('web');      await wait(700); await shot('5-web');
 
   // Resize to a normal window for a readable, prominent modal capture.
   win.setContentSize(900, 760);

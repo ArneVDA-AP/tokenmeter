@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { scan } = require('../src/scanner');
-const { gen } = require('./lib/genFixtures');
+const { gen, genWebUsage } = require('./lib/genFixtures');
 
 app.commandLine.appendSwitch('no-sandbox');
 
@@ -17,8 +17,10 @@ const fixHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-uismoke-'));
 const claudeProjects = path.join(fixHome, '.claude', 'projects');
 fs.mkdirSync(claudeProjects, { recursive: true });
 gen(claudeProjects);
+const webUsageFile = path.join(fixHome, 'web-usage.json');
+genWebUsage(webUsageFile);
 
-const settings = { refreshInterval: 0, lookbackDays: 14, claudePath: claudeProjects, geminiPath: '', idleTimeout: 0, dailyCostAlert: 0 };
+const settings = { refreshInterval: 0, lookbackDays: 14, claudePath: claudeProjects, geminiPath: '', webPath: webUsageFile, idleTimeout: 0, dailyCostAlert: 0 };
 ipcMain.handle('get-usage-data', async () => scan(settings));
 ipcMain.handle('get-settings', () => settings);
 for (const c of ['save-settings', 'window-minimize', 'window-maximize', 'window-close', 'open-external', 'show-notification']) {
@@ -90,6 +92,17 @@ app.whenReady().then(async () => {
     return rows.length>0 && rows.every(n=>n.textContent.trim()==='Home');
   })()`);
   rec('project filter narrows to selected project', narrowed === true);
+
+  // 6. Web tab renders limit gauges + conversations from the fixture snapshot
+  await $(win, "navigate('web');1"); await wait(500);
+  const webLimits = await $(win, "document.querySelectorAll('#web-limits .web-limit').length");
+  rec('web tab renders limit gauges', webLimits === 4, `${webLimits} gauges`);
+  rec('web tab content visible (not empty state)',
+    (await $(win, "getComputedStyle(document.getElementById('web-content')).display")) !== 'none');
+  rec('web tab lists top conversations',
+    (await $(win, "document.querySelectorAll('#web-convos tr').length")) > 0);
+  rec('over-90% limit flagged as warn',
+    (await $(win, "!!document.querySelector('#web-limits .web-limit-pct.warn')")) === true);
 
   rec('no console errors during run', consoleErrors.length === 0,
     consoleErrors.length ? consoleErrors.slice(0, 3).join(' | ') : '');

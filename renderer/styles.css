@@ -13,6 +13,7 @@
   --orange:  #e8650a;
   --gemini:  #4a9eff;
   --green:   #4caf75;
+  --warn:    #e0431a;
 
   --font:    'Space Mono', monospace;
 
@@ -134,6 +135,7 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 .nav-tab[data-page="overview"].active::after { background: var(--green); }
 .nav-tab[data-page="claude"].active::after   { background: var(--orange); }
 .nav-tab[data-page="sessions"].active::after  { background: var(--orange); }
+.nav-tab[data-page="web"].active::after        { background: var(--orange); }
 
 /* ── PAGES ── */
 .page { display: none; }
@@ -517,10 +519,35 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 .tmux-pane-close:hover { opacity: 0.7; }
 .tmux-pane-body { padding: 16px; overflow-y: auto; }
 
+/* ── WEB USAGE ── */
+.web-org-row {
+  display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px;
+}
+.web-org-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.web-tier {
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--orange); border: 1px solid var(--border-hi);
+  border-radius: 2px; padding: 1px 6px;
+}
+.web-limits { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
+.web-limit {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px;
+}
+.web-limit-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.web-limit-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.web-limit-pct { font-size: 14px; font-weight: 700; color: var(--orange); }
+.web-limit-pct.warn { color: var(--warn); }
+.web-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.web-bar-fill { height: 100%; background: var(--orange); }
+.web-bar-fill.warn { background: var(--warn); }
+.web-limit-reset { font-size: 9px; color: var(--text-dim); margin-top: 5px; }
+
 /* ── RESPONSIVE ── */
 @media (max-width: 600px) {
   .stat-grid  { grid-template-columns: repeat(2,1fr); }
   .stat-chips { grid-template-columns: repeat(2,1fr); }
   .insight-grid { grid-template-columns: 1fr; }
   .tmux-name { max-width: 40%; }
+  .web-limits { grid-template-columns: 1fr; }
 }

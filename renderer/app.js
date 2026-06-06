@@ -89,6 +89,7 @@ function navigate(pageId) {
     if (pageId === 'claude')        renderClaude(usageData);
     else if (pageId === 'overview') renderOverview(usageData);
     else if (pageId === 'sessions') renderSessions(usageData);
+    else if (pageId === 'web')      renderWeb(usageData);
   }
 }
 
@@ -572,12 +573,85 @@ function closeSessionDetail() {
   document.getElementById('session-detail-overlay').classList.remove('visible');
 }
 
+// ── Render Web Usage (claude.ai, via the Claude Usage extension mirror) ───────
+function fmtResetIn(resetsAt) {
+  if (!resetsAt) return '';
+  const diff = resetsAt - Date.now();
+  if (diff <= 0) return 'resetting now';
+  const h = Math.floor(diff / 3600000), m = Math.floor((diff % 3600000) / 60000);
+  if (h >= 24) return `resets in ${Math.floor(h / 24)}d ${h % 24}h`;
+  if (h >= 1)  return `resets in ${h}h ${m}m`;
+  return `resets in ${m}m`;
+}
+
+function renderWeb(data) {
+  const web = data?.web;
+  const emptyEl = document.getElementById('web-empty');
+  const contentEl = document.getElementById('web-content');
+  if (!emptyEl || !contentEl) return;
+
+  if (!web || !web.available) {
+    contentEl.style.display = 'none';
+    emptyEl.style.display = 'block';
+    emptyEl.textContent = (web && web.dataNote) ||
+      'No web-usage data found. See integration/README.md to connect the Claude Usage extension.';
+    return;
+  }
+  emptyEl.style.display = 'none';
+  contentEl.style.display = 'block';
+
+  const org = web.primaryOrg || web.orgs[0];
+  document.getElementById('web-org-name').textContent = org.orgName || org.orgId || 'Organization';
+  document.getElementById('web-tier').textContent = (org.subscriptionTier || '').replace(/_/g, ' ');
+  document.getElementById('web-header-sub').textContent =
+    `claude.ai · ${web.totalConversations} conversations · ${fmtTokens(web.conversationTokens)} tokens`;
+
+  // Limit gauges
+  const limitsEl = document.getElementById('web-limits');
+  limitsEl.innerHTML = '';
+  for (const lim of org.limits) {
+    const warn = lim.percentage >= 90;
+    const div = document.createElement('div');
+    div.className = 'web-limit';
+    div.innerHTML = `
+      <div class="web-limit-head">
+        <span class="web-limit-label">${lim.label}</span>
+        <span class="web-limit-pct${warn ? ' warn' : ''}">${lim.percentage.toFixed(0)}%</span>
+      </div>
+      <div class="web-bar"><div class="web-bar-fill${warn ? ' warn' : ''}" style="width:${lim.percentage}%"></div></div>
+      <div class="web-limit-reset">${fmtResetIn(lim.resetsAt)}</div>
+    `;
+    limitsEl.appendChild(div);
+  }
+
+  // Top conversations
+  const tbody = document.getElementById('web-convos');
+  tbody.innerHTML = '';
+  for (const c of web.topConversations) {
+    const id = (c.conversationId || '').slice(0, 8);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono dim" title="${c.conversationId || ''}">${id || '—'}</td>
+      <td class="mono dim">${(c.model || '').replace('claude-', '')}</td>
+      <td class="mono dim">${fmtTokens(c.length)}</td>
+      <td class="mono dim">${c.cost || 0}</td>
+      <td class="mono dim">${c.cached ? 'cached' : '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  const staleEl = document.getElementById('web-stale');
+  if (web.stale && web.dataNote) { staleEl.style.display = 'block'; staleEl.textContent = web.dataNote; }
+  else staleEl.style.display = 'none';
+}
+
 // ── Render All ─────────────────────────────────────────────────────────────
 function render(data) {
   usageData = data;
   renderOverview(data);
   renderClaude(data);
   renderSessions(data);
+  renderWeb(data);
   checkCostAlert(data);
 
   const ts = new Date(data.timestamp);

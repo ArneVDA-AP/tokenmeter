@@ -126,6 +126,28 @@ check('daily entries carry cacheReadTokens (incl. empty days)', () => {
   assert.strictEqual(totalDailyCacheRead, 450); // all records fall in the 14-day window
 });
 
+check('session cost = sum of its per-model costs', () => {
+  const s = r.sessions.find(x => x.id === 'sess1');
+  const modelSum = Object.values(s.models).reduce((a, m) => a + m.estimatedCostUSD, 0);
+  assert.ok(approx(s.estimatedCostUSD, modelSum), `${s.estimatedCostUSD} vs ${modelSum}`);
+});
+
+check('single-record session has durationMs 0', () => {
+  const s = r.sessions.find(x => x.id === 'sess2'); // one record
+  assert.strictEqual(s.recordCount, 1);
+  assert.strictEqual(s.durationMs, 0);
+});
+
+check('sessions returned sorted by recency (mtime desc)', () => {
+  for (let i = 1; i < r.sessions.length; i++) {
+    assert.ok(r.sessions[i - 1].mtime >= r.sessions[i].mtime, 'not sorted at index ' + i);
+  }
+});
+
+check('each session id is the .jsonl filename (no extension)', () => {
+  assert.ok(r.sessions.every(s => s.id && !s.id.endsWith('.jsonl')));
+});
+
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 fs.rmSync(root, { recursive: true, force: true });
 

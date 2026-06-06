@@ -81,7 +81,33 @@ app.whenReady().then(async () => {
       && document.getElementById('sd-models').children.length>0;
   })()`);
   rec('row click opens populated detail pane', opened === true);
-  await $(win, "closeSessionDetail();1");
+
+  // 4b. Detail pane title reflects the clicked session, and close hides it.
+  rec('detail title shows project / id',
+    /\w+\s*\/\s*\w+/.test(await $(win, "document.getElementById('sd-title').textContent")));
+  const closed = await $(win, "closeSessionDetail(); !document.getElementById('session-detail-overlay').classList.contains('visible')");
+  rec('closeSessionDetail hides the overlay', closed === true);
+
+  // 4c. Sorting by tokens puts the highest-token session first.
+  const sortOk = await $(win, `(function(){
+    var sessions = usageData.claude.sessions || [];
+    var maxId = sessions.slice().sort((a,b)=>b.totalTokens-a.totalTokens)[0].id;
+    var sel=document.getElementById('se-sort'); sel.value='tokens'; sel.dispatchEvent(new Event('change'));
+    var first=document.querySelector('#se-list .tmux-row');
+    return first && first.dataset.sessionId === maxId;
+  })()`);
+  rec('sort by tokens orders highest first', sortOk === true);
+  await $(win, "document.getElementById('se-sort').value='recent'; document.getElementById('se-sort').dispatchEvent(new Event('change')); 1");
+
+  // 4d. Text filter narrows to matching projects.
+  const textOk = await $(win, `(function(){
+    var inp=document.getElementById('se-filter-text'); inp.value='burnlink'; inp.dispatchEvent(new Event('input'));
+    var names=[...document.querySelectorAll('#se-list .tmux-row .tmux-name')];
+    var ok = names.length>0 && names.every(n=>n.textContent.toLowerCase().includes('burnlink'));
+    inp.value=''; inp.dispatchEvent(new Event('input'));
+    return ok;
+  })()`);
+  rec('text filter narrows to matching project', textOk === true);
 
   // 5. Filtering narrows the list
   const narrowed = await $(win, `(function(){

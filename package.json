@@ -10,10 +10,12 @@
     "gen-banner": "node scripts/gen-banner.js",
     "prebuild": "node scripts/gen-icon.js",
     "build": "electron-builder --win",
-    "build:portable": "electron-builder --win portable"
+    "build:portable": "electron-builder --win portable",
+    "test": "node test/parser.test.js"
   },
   "keywords": ["electron", "claude", "gemini", "tokens", "developer-tools"],
-  "author": "Dewashish Lambore",
+  "author": "Arne Van den Abbeele",
+  "contributors": ["Dewashish Lambore (original author)"],
   "license": "MIT",
   "dependencies": {
     "electron-store": "^8.1.0"
@@ -23,9 +25,9 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.dewashish.tokenmeter",
+    "appId": "com.arnevda.tokenmeter",
     "productName": "Tokenmeter",
-    "copyright": "© 2026 Dewashish Lambore",
+    "copyright": "© 2026 Dewashish Lambore, Arne Van den Abbeele",
     "directories": {
       "output": "dist"
     },

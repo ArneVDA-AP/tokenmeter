@@ -1,0 +1,7 @@
+{
+  "name": "com.tokenmeter.host",
+  "description": "Tokenmeter web-usage mirror host",
+  "path": "REPLACE_WITH_ABSOLUTE_PATH_TO\\tokenmeter-host.bat",
+  "type": "stdio",
+  "allowed_extensions": ["claude_usage_tracker@lugia19.com"]
+}

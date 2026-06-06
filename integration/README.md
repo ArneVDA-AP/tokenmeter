@@ -35,13 +35,14 @@ don't conflict (see `../vendor/README.md`).
    startTokenmeterMirror({ getUsage: getPopupUsageData });
    ```
    and add `"nativeMessaging"` to the manifest `permissions`.
-3. **Install the native host**:
-   - Edit `tokenmeter_host.json` `path` → absolute path to `tokenmeter-host.bat`.
-   - Register it (Windows, per-user): create registry key
-     `HKCU\Software\Mozilla\NativeMessagingHosts\com.tokenmeter.host`
-     with its default value = absolute path to `tokenmeter_host.json`.
-     (PowerShell: `New-Item -Path 'HKCU:\Software\Mozilla\NativeMessagingHosts\com.tokenmeter.host' -Force; Set-ItemProperty -Path 'HKCU:\Software\Mozilla\NativeMessagingHosts\com.tokenmeter.host' -Name '(Default)' -Value 'C:\path\to\tokenmeter_host.json'`)
-   - Ensure Node.js is on PATH (the .bat calls `node`).
+3. **Install the native host** (one command):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File integration\native-host\install.ps1
+   ```
+   This checks for Node, writes `tokenmeter_host.json` with the correct launcher path,
+   and registers it under `HKCU\Software\Mozilla\NativeMessagingHosts\com.tokenmeter.host`.
+   Ensure Node.js is on PATH (the .bat calls `node`). Undo with `uninstall.ps1`.
+   If Zen uses a vendor-specific registry path instead of Mozilla's, adjust `$regKey`.
 4. **Verify**: open claude.ai in Zen so the extension refreshes; check that
    `%APPDATA%\Tokenmeter\web-usage.json` appears and updates. Then open Tokenmeter —
    `scan()` will pick it up as `data.web`.

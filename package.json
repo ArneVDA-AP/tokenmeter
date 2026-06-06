@@ -11,13 +11,24 @@
     "prebuild": "node scripts/gen-icon.js",
     "build": "electron-builder --win",
     "build:portable": "electron-builder --win portable",
-    "test": "node test/parser.test.js"
+    "test": "node test/parser.test.js",
+    "test:ui": "electron --no-sandbox test/ui-smoke.js",
+    "screenshots": "electron --no-sandbox test/ui-screenshot.js"
   },
-  "keywords": ["electron", "claude", "gemini", "tokens", "developer-tools"],
+  "keywords": [
+    "electron",
+    "claude",
+    "gemini",
+    "tokens",
+    "developer-tools"
+  ],
   "author": "Arne Van den Abbeele",
-  "contributors": ["Dewashish Lambore (original author)"],
+  "contributors": [
+    "Dewashish Lambore (original author)"
+  ],
   "license": "MIT",
   "dependencies": {
+    "chart.js": "^4.4.3",
     "electron-store": "^8.1.0"
   },
   "devDependencies": {
@@ -33,8 +44,18 @@
     },
     "win": {
       "target": [
-        { "target": "nsis",     "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico"
     },

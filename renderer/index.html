@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self';
-                 script-src 'self' https://cdn.jsdelivr.net;
-                 style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-                 font-src https://fonts.gstatic.com;
+                 script-src 'self';
+                 style-src 'self' 'unsafe-inline';
+                 font-src 'self';
                  img-src 'self' data:;
                  connect-src 'none';">
   <title>Tokenmeter</title>
@@ -327,7 +327,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="vendor/chart.umd.js"></script>
 <script src="animations.js"></script>
 <script src="app.js"></script>
 </body>

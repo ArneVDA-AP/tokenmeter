@@ -82,6 +82,14 @@ function navigate(pageId) {
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.getElementById(`page-${pageId}`)?.classList.add('active');
   document.querySelector(`.nav-tab[data-page="${pageId}"]`)?.classList.add('active');
+  // Charts created while their page was display:none measure a width of 0 and
+  // render too small. Re-render the page's content now that it's visible so its
+  // charts are built against the real layout width.
+  if (usageData) {
+    if (pageId === 'claude')        renderClaude(usageData);
+    else if (pageId === 'overview') renderOverview(usageData);
+    else if (pageId === 'sessions') renderSessions(usageData);
+  }
 }
 
 // ── Chart Helpers ──────────────────────────────────────────────────────────

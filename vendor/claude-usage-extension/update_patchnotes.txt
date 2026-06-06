@@ -1,0 +1,1 @@
+Fix cache tracking for Opus 4.8

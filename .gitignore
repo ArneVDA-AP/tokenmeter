@@ -6,3 +6,6 @@ build/
 .claude/
 claudepix/
 Screenshot*.png
+
+# Generated test output (screenshots harness)
+test/shots/

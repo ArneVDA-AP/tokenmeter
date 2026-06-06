@@ -56,6 +56,21 @@ function fmtTimestamp(ts) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function fmtClock(ts) {
+  const d = new Date(ts);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '—';
+  const min = Math.round(ms / 60000);
+  if (min < 1)  return '<1m';
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  const rem = min % 60;
+  return rem ? `${hr}h ${rem}m` : `${hr}h`;
+}
+
 function pct(val, total) {
   if (!total) return 0;
   return Math.min(100, (val / total) * 100);
@@ -113,6 +128,43 @@ function makeBarChart(canvasId, labels, datasets) {
 }
 
 function dailyLabels(daily) { return daily.map(d => d.label); }
+
+// Line chart for a 0–100% series (e.g. cache hit rate). Built explicitly rather
+// than via CHART_DEFAULTS so the %-axis tick + tooltip callbacks survive.
+function makeCacheTrendChart(canvasId, labels, data) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  if (charts[canvasId]) charts[canvasId].destroy();
+  const mono10 = { family: "'Space Mono', monospace", size: 10 };
+  const mono9  = { family: "'Space Mono', monospace", size: 9 };
+  charts[canvasId] = new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data,
+      borderColor: 'rgba(232,101,10,0.85)',
+      backgroundColor: 'rgba(232,101,10,0.12)',
+      fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5,
+    }] },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e1e1e', borderColor: '#3d3d3d', borderWidth: 1,
+          titleFont: mono9, bodyFont: mono10,
+          callbacks: { label: ctx => ` ${(+ctx.raw).toFixed(1)}% cached` },
+        },
+      },
+      scales: {
+        x: { grid: { color: '#2e2e2e' }, ticks: { color: '#525252', font: mono9 } },
+        y: { min: 0, max: 100, grid: { color: '#2e2e2e' },
+             ticks: { color: '#525252', font: mono9, callback: v => v + '%' } },
+      },
+    },
+  });
+  return charts[canvasId];
+}
 
 // ── Heatmap ────────────────────────────────────────────────────────────────
 function renderHeatmap(heatmap) {
@@ -303,6 +355,7 @@ function renderClaude(data) {
   document.getElementById('cl-output').textContent      = fmtTokens(cl.totalOutputTokens);
   document.getElementById('cl-cache-read').textContent  = fmtTokens(cl.totalCacheReadTokens);
   document.getElementById('cl-cache-write').textContent = fmtTokens(cl.totalCacheWriteTokens);
+  document.getElementById('cl-cache-hit').textContent   = (cl.globalCacheHitPct || 0).toFixed(1) + '%';
   document.getElementById('cl-cache-savings').textContent =
     `saved ${fmtCost(cl.cacheSavingsUSD || 0)} vs uncached`;
 
@@ -312,6 +365,10 @@ function renderClaude(data) {
     { label: 'Input',  data: daily.map(d => d.inputTokens),  backgroundColor: 'rgba(212,162,122,0.5)',  borderRadius: 3, borderSkipped: false },
     { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: 'rgba(212,162,122,0.85)', borderRadius: 3, borderSkipped: false },
   ]);
+
+  // Cache hit trend (per-day cacheRead / (cacheRead + input))
+  makeCacheTrendChart('chart-cache-trend', dailyLabels(daily),
+    daily.map(d => d.cacheReadTokens / ((d.cacheReadTokens + d.inputTokens) || 1) * 100));
 
   // Heatmap and peak hours
   renderHeatmap(cl.heatmap);
@@ -358,6 +415,7 @@ function renderClaude(data) {
       <td class="mono dim">${proj.sessionCount}</td>
       <td class="mono dim">${fmtTokens(proj.totalTokens)}</td>
       <td class="mono dim">${fmtCost(proj.estimatedCostUSD)}</td>
+      <td class="mono dim">${(proj.cacheHitPct || 0).toFixed(1)}%</td>
       <td><canvas id="${canvasId}" class="sparkline-canvas" width="58" height="20"></canvas></td>
       <td>
         <div class="table-bar-track">
@@ -389,11 +447,129 @@ function renderClaude(data) {
 }
 
 
+// ── Render Sessions (tmux-style) ─────────────────────────────────────────────
+function renderSessions(data) {
+  const cl = data?.claude;
+  const sessions = cl?.sessions || [];
+  const listEl  = document.getElementById('se-list');
+  const emptyEl = document.getElementById('se-empty');
+  if (!listEl) return;
+
+  // Project filter dropdown — rebuild, preserving the current selection.
+  const projSel = document.getElementById('se-project');
+  const projects = [...new Set(sessions.map(s => s.project))].sort();
+  const curProj = projSel.value;
+  projSel.innerHTML = '<option value="">all projects</option>' +
+    projects.map(p => `<option value="${p}">${p}</option>`).join('');
+  projSel.value = projects.includes(curProj) ? curProj : '';
+
+  // tmux status line
+  const totalCost = sessions.reduce((s, x) => s + (x.estimatedCostUSD || 0), 0);
+  document.getElementById('se-status-summary').textContent =
+    `${sessions.length} sessions · ${fmtCost(totalCost)} · cache ${(cl?.globalCacheHitPct || 0).toFixed(0)}%`;
+
+  // Filter
+  const text = (document.getElementById('se-filter-text').value || '').toLowerCase().trim();
+  const proj = projSel.value;
+  let rows = sessions.filter(s =>
+    (!proj || s.project === proj) &&
+    (!text || s.project.toLowerCase().includes(text) || (s.id || '').toLowerCase().includes(text)));
+
+  // Sort
+  const sort = document.getElementById('se-sort').value;
+  const cmp = {
+    recent:   (a, b) => b.endTime - a.endTime,
+    tokens:   (a, b) => b.totalTokens - a.totalTokens,
+    cost:     (a, b) => b.estimatedCostUSD - a.estimatedCostUSD,
+    duration: (a, b) => b.durationMs - a.durationMs,
+  }[sort] || ((a, b) => b.endTime - a.endTime);
+  rows = rows.slice().sort(cmp);
+
+  const CAP = 100;
+  const capped = rows.slice(0, CAP);
+  const maxTokens = Math.max(...capped.map(s => s.totalTokens), 1);
+
+  listEl.innerHTML = '';
+  capped.forEach((s, i) => {
+    const row = document.createElement('div');
+    row.className = 'tmux-row';
+    row.dataset.sessionId = s.id;
+    row.dataset.project = s.project;
+    const share = pct(s.totalTokens, maxTokens);
+    row.innerHTML = `
+      <span class="tmux-idx">${i}:</span>
+      <span class="tmux-name">${s.project}</span>
+      <span class="tmux-meta">${s.recordCount} msg · ${fmtTokens(s.totalTokens)} · ${fmtCost(s.estimatedCostUSD)} · cache ${(s.cacheHitPct || 0).toFixed(0)}% · ${fmtDuration(s.durationMs)} · ${fmtRelTime(s.endTime)}</span>
+      <span class="tmux-bar"><span class="tmux-bar-fill" style="width:${share}%"></span></span>
+    `;
+    listEl.appendChild(row);
+  });
+
+  emptyEl.style.display = capped.length === 0 ? 'block' : 'none';
+  if (rows.length > CAP) {
+    const more = document.createElement('div');
+    more.className = 'tmux-more';
+    more.textContent = `… ${rows.length - CAP} more — refine the filter to narrow`;
+    listEl.appendChild(more);
+  }
+}
+
+function renderSessionDetail(session) {
+  if (!session) return;
+  document.getElementById('sd-title').textContent = `${session.project} / ${session.id}`;
+
+  const stats = [
+    ['Started', fmtClock(session.startTime)],
+    ['Ended', fmtClock(session.endTime)],
+    ['Duration', fmtDuration(session.durationMs)],
+    ['Messages', session.recordCount],
+    ['Input', fmtTokens(session.inputTokens)],
+    ['Output', fmtTokens(session.outputTokens)],
+    ['Cache Read', fmtTokens(session.cacheReadTokens)],
+    ['Cache Write', fmtTokens(session.cacheWriteTokens)],
+    ['Est. Cost', fmtCost(session.estimatedCostUSD)],
+    ['Cache Hit', (session.cacheHitPct || 0).toFixed(1) + '%'],
+  ];
+  document.getElementById('sd-stats').innerHTML = stats.map(([label, val]) => `
+    <div class="stat-card">
+      <div class="stat-card-label">${label}</div>
+      <div class="stat-card-value">${val}</div>
+    </div>`).join('');
+
+  // Per-model table within the session
+  const models = session.models || {};
+  const entries = Object.entries(models).sort((a, b) =>
+    (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens));
+  document.getElementById('sd-models').innerHTML = entries.map(([model, st]) => {
+    const tokens = st.inputTokens + st.outputTokens;
+    const hit = st.cacheReadTokens / ((st.cacheReadTokens + st.inputTokens) || 1) * 100;
+    return `<tr>
+      <td class="mono" title="${model}">${model.length > 28 ? model.slice(0, 26) + '…' : model}</td>
+      <td class="mono dim">${fmtTokens(tokens)}</td>
+      <td class="mono dim">${fmtCost(st.estimatedCostUSD)}</td>
+      <td class="mono dim">${hit.toFixed(0)}%</td>
+    </tr>`;
+  }).join('');
+
+  // Token split by model
+  makeBarChart('chart-session-models',
+    entries.map(([m]) => m.length > 16 ? m.slice(0, 14) + '…' : m),
+    [{ label: 'Tokens', data: entries.map(([, st]) => st.inputTokens + st.outputTokens),
+       backgroundColor: 'rgba(212,162,122,0.85)', borderRadius: 3, borderSkipped: false }]);
+
+  document.getElementById('session-detail-overlay').classList.add('visible');
+}
+
+function closeSessionDetail() {
+  document.getElementById('session-detail-overlay').classList.remove('visible');
+}
+
 // ── Render All ─────────────────────────────────────────────────────────────
 function render(data) {
   usageData = data;
   renderOverview(data);
   renderClaude(data);
+  renderSessions(data);
   checkCostAlert(data);
 
   const ts = new Date(data.timestamp);
@@ -494,6 +670,22 @@ async function init() {
   document.getElementById('s-save').addEventListener('click', saveSettings);
   document.getElementById('settings-overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('settings-overlay')) closeSettings();
+  });
+
+  // Sessions tab: filter/sort + row drill-down
+  document.getElementById('se-filter-text').addEventListener('input',  () => renderSessions(usageData));
+  document.getElementById('se-project').addEventListener('change',     () => renderSessions(usageData));
+  document.getElementById('se-sort').addEventListener('change',        () => renderSessions(usageData));
+  document.getElementById('se-list').addEventListener('click', e => {
+    const row = e.target.closest('.tmux-row');
+    if (!row) return;
+    const { sessionId, project } = row.dataset;
+    const s = (usageData?.claude?.sessions || []).find(x => x.id === sessionId && x.project === project);
+    renderSessionDetail(s);
+  });
+  document.getElementById('sd-close').addEventListener('click', closeSessionDetail);
+  document.getElementById('session-detail-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('session-detail-overlay')) closeSessionDetail();
   });
 
   // Dismiss idle on click anywhere in content

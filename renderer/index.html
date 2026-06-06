@@ -144,11 +144,21 @@
         <div class="stat-card-label">Cache Write</div>
         <div class="stat-card-value" id="cl-cache-write">—</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-card-label">Cache Hit Rate</div>
+        <div class="stat-card-value accent-claude" id="cl-cache-hit">—</div>
+        <div class="stat-card-sub">of prompt tokens cached</div>
+      </div>
     </div>
 
     <div class="section-heading">Daily Activity (14 days)</div>
     <div class="chart-container">
       <canvas id="chart-claude-daily" class="chart-canvas"></canvas>
+    </div>
+
+    <div class="section-heading">Cache Hit Trend (14 days)</div>
+    <div class="chart-container">
+      <canvas id="chart-cache-trend" class="chart-canvas"></canvas>
     </div>
 
     <div class="section-heading">90-day Activity Heatmap</div>
@@ -188,7 +198,7 @@
       <table class="breakdown-table">
         <thead><tr>
           <th>Project</th><th>Sessions</th><th>Tokens</th>
-          <th>Est. Cost</th><th style="width:60px">14d</th><th style="width:20%">Share</th>
+          <th>Est. Cost</th><th>Cache</th><th style="width:60px">14d</th><th style="width:20%">Share</th>
         </tr></thead>
         <tbody id="cl-project-tbody"></tbody>
       </table>
@@ -198,6 +208,29 @@
     <div class="session-list" id="cl-sessions-list"></div>
   </div><!-- /page-claude -->
 
+  <!-- PAGE: Sessions (tmux-style) -->
+  <div class="page" id="page-sessions">
+    <div class="tmux-status">
+      <span class="tmux-status-tag">[tokenmeter]</span>
+      <span id="se-status-summary">— sessions</span>
+    </div>
+
+    <div class="session-controls">
+      <input class="setting-input" id="se-filter-text" type="text" placeholder="filter by project…">
+      <select class="setting-select" id="se-project">
+        <option value="">all projects</option>
+      </select>
+      <select class="setting-select" id="se-sort">
+        <option value="recent">sort: recent</option>
+        <option value="tokens">sort: tokens</option>
+        <option value="cost">sort: cost</option>
+        <option value="duration">sort: duration</option>
+      </select>
+    </div>
+
+    <div id="se-list" class="tmux-list"></div>
+    <div id="se-empty" class="tmux-empty" style="display:none">no sessions match.</div>
+  </div><!-- /page-sessions -->
 
 </div><!-- /main-content -->
 
@@ -211,6 +244,7 @@
 <nav id="bottom-nav">
   <button class="nav-tab active" data-page="overview">Overview</button>
   <button class="nav-tab"        data-page="claude">Claude Code</button>
+  <button class="nav-tab"        data-page="sessions">Sessions</button>
 </nav>
 
 <!-- Settings Modal -->
@@ -263,6 +297,30 @@
     <div class="settings-actions">
       <button class="btn btn-secondary" id="s-cancel">Cancel</button>
       <button class="btn btn-primary"   id="s-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Session Detail (tmux pane) -->
+<div id="session-detail-overlay">
+  <div class="tmux-pane">
+    <div class="tmux-pane-title">
+      <span id="sd-title">session</span>
+      <button class="tmux-pane-close" id="sd-close" title="Close">✕</button>
+    </div>
+    <div class="tmux-pane-body">
+      <div class="stat-grid" id="sd-stats"></div>
+      <div class="section-heading">Models</div>
+      <div class="chart-container" style="padding:0;overflow:hidden">
+        <table class="breakdown-table">
+          <thead><tr><th>Model</th><th>Tokens</th><th>Est. Cost</th><th>Cache</th></tr></thead>
+          <tbody id="sd-models"></tbody>
+        </table>
+      </div>
+      <div class="section-heading">Token Split by Model</div>
+      <div class="chart-container">
+        <canvas id="chart-session-models" class="chart-canvas"></canvas>
+      </div>
     </div>
   </div>
 </div>

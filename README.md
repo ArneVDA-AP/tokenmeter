@@ -6,8 +6,8 @@
 
 <div align="center">
 
-[![Release](https://img.shields.io/github/v/release/DewashishCodes/tokenmeter?color=e8650a&style=flat-square&label=latest)](https://github.com/DewashishCodes/tokenmeter/releases/latest)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-2e2e2e?style=flat-square)](https://github.com/DewashishCodes/tokenmeter/releases/latest)
+[![Release](https://img.shields.io/github/v/release/ArneVDA-AP/tokenmeter?color=e8650a&style=flat-square&label=latest)](https://github.com/ArneVDA-AP/tokenmeter/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-2e2e2e?style=flat-square)](https://github.com/ArneVDA-AP/tokenmeter/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-2e2e2e?style=flat-square)](LICENSE)
 
 </div>
@@ -49,7 +49,7 @@
 
 ## Install
 
-Download from [**Releases →**](https://github.com/DewashishCodes/tokenmeter/releases/latest)
+Download from [**Releases →**](https://github.com/ArneVDA-AP/tokenmeter/releases/latest)
 
 | File | Description |
 |------|-------------|
@@ -68,9 +68,10 @@ Tokenmeter scans `%USERPROFILE%\.claude\projects\**\*.jsonl` — the same sessio
 ## Build from source
 
 ```bash
-git clone https://github.com/DewashishCodes/tokenmeter
+git clone https://github.com/ArneVDA-AP/tokenmeter
 cd tokenmeter
 npm install
+npm test              # run the parser unit tests
 npm start             # dev mode
 npm run build         # → dist/  (installer + portable)
 ```
@@ -81,6 +82,10 @@ Requires Node.js 18+ and Windows with **Developer Mode** enabled (Settings → S
 
 Cost estimates use `pricing.json` bundled with the app — hand-editable if Anthropic updates rates. All figures are displayed as `~$` to make clear they are estimates.
 
+## Credits
+
+A personal fork of [Tokenmeter by Dewashish Lambore](https://github.com/DewashishCodes/tokenmeter) — all credit for the original app goes to the original author.
+
 ## License
 
-MIT © 2026 Dewashish Lambore
+MIT © 2026 Dewashish Lambore (original author), Arne Van den Abbeele (fork maintainer) — see [LICENSE](LICENSE).

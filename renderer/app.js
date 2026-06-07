@@ -478,7 +478,12 @@ function escHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
-function hyprIsActive(s) { return (Date.now() - (s.endTime || s.mtime)) < HYPR_ACTIVE_MS; }
+function hyprIsActive(s) {
+  // Use the file's last write (mtime), not just the last usage record: a session
+  // mid-long-generation hasn't written a new assistant/usage record yet, but its
+  // .jsonl is still being appended to, so mtime is the truer "is it running" signal.
+  return (Date.now() - Math.max(s.mtime || 0, s.endTime || 0)) < HYPR_ACTIVE_MS;
+}
 function hyprShortId(id) {
   const base = String(id || '').replace(/~a\d+$/, '');
   const seg = base.split(/[-_/]/).pop() || base;
@@ -559,9 +564,24 @@ function hyprPumpSummaries() {
       .finally(() => { hyprSummaryInflight.delete(key); hyprSummaryActive--; hyprPumpSummaries(); });
   }
 }
+// Generate a summary for one specific session (e.g. the one whose detail just
+// opened) — works for active sessions too, which the grid batch skips.
+function hyprRequestSummary(s) {
+  if (!s || !hyprSummariesAvailable) return;
+  if (currentSettings && currentSettings.sessionSummaries === false) return;
+  if (s.summarySource === 'claude') return;
+  const key = `${s.id}:${s.mtime}`;
+  if (hyprSummaryCache[key] || hyprSummaryInflight.has(key)) return;
+  hyprSummaryQueue.unshift(s); // prioritise the opened session
+  hyprPumpSummaries();
+}
 function hyprUpdateSummaryDOM(id, text) {
   const el = document.querySelector(`#hypr-root .hypr-win[data-sid="${CSS.escape(id)}"] .hypr-summary`);
   if (el) { el.textContent = text; el.title = text; }
+  if (hyprDetailId === id) {
+    const s = hyprFind(usageData?.claude, id);
+    if (s) hyprOpenDetail(s, usageData?.claude?.workspaces || []);
+  }
 }
 
 function renderSessions(data) {
@@ -585,7 +605,7 @@ function renderSessions(data) {
 
   if (hyprDetailId) {
     const s = hyprFind(cl, hyprDetailId);
-    if (s) hyprOpenDetail(s, workspaces);
+    if (s) { hyprOpenDetail(s, workspaces); hyprRequestSummary(s); }
     else hyprDetailId = null;
   }
 
@@ -679,7 +699,7 @@ function hyprWin(s, isChild) {
         <div class="hypr-wtitle">
           <div class="hypr-lights"><span class="hypr-dot ${active ? 'run' : ''}"></span><span class="hypr-dot"></span><span class="hypr-dot"></span></div>
           <div class="hypr-wname">${isChild ? '<span class="agentmark">⊳</span>' : ''}<b>${escHtml((s.agents && s.agents[0]) || 'main')}</b><span class="sep"> · </span>${escHtml(hyprShortId(s.id))}</div>
-          <div class="hypr-wago">${hyprAgo(s.endTime || s.mtime)}${active ? '<span class="hypr-pulse"></span>' : ''}</div>
+          <div class="hypr-wago">${hyprAgo(Math.max(s.mtime || 0, s.endTime || 0))}${active ? '<span class="hypr-pulse"></span>' : ''}</div>
         </div>
         <div class="hypr-term">
           ${!active && hyprDisplaySummary(s) ? `<div class="hypr-summary" title="${escHtml(hyprDisplaySummary(s))}">${escHtml(hyprDisplaySummary(s))}</div>` : ''}
@@ -729,6 +749,10 @@ function hyprDetailHTML(s, workspaces) {
 
   const out = (s.preview || []).map(l => `<div class="ln l-${l.type}">${escHtml(l.text)}</div>`).join('');
   const summaryText = hyprDisplaySummary(s);
+  // Honest label: only call it a SUMMARY when it's a real Claude summary record
+  // or a generated one — otherwise it's just the opening prompt (the TASK).
+  const summaryIsReal = s.summarySource === 'claude' || !!hyprSummaryCache[`${s.id}:${s.mtime}`];
+  const summaryLabel = summaryIsReal ? 'SUMMARY' : 'TASK';
   return `
     <div class="hypr-detail-head"><div class="hypr-detail-head-in">
       <div>
@@ -739,7 +763,7 @@ function hyprDetailHTML(s, workspaces) {
     </div></div>
     <div class="hypr-detail-body">
       <div class="hypr-stats">${statCards}</div>
-      ${summaryText ? `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SUMMARY</div><div class="hypr-doutput"><div class="ln" style="white-space:normal">${escHtml(summaryText)}</div></div></div>` : ''}
+      ${summaryText ? `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">${summaryLabel}</div><div class="hypr-doutput"><div class="ln" style="white-space:normal">${escHtml(summaryText)}</div></div></div>` : ''}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">MODELS</div>${modelRows}</div>
       ${rel}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SESSION OUTPUT</div><div class="hypr-doutput">${out}</div></div>
@@ -823,7 +847,7 @@ function hyprHandleClick(e) {
   const drow = e.target.closest('.hypr-drow.card[data-sid]');
   if (drow) {
     const s = hyprFind(cl, drow.dataset.sid);
-    if (s) { hyprDetailId = s.id; hyprFocused = s.id; hyprOpenDetail(s, cl?.workspaces || []); }
+    if (s) { hyprDetailId = s.id; hyprFocused = s.id; hyprOpenDetail(s, cl?.workspaces || []); hyprRequestSummary(s); }
     return;
   }
 
@@ -850,6 +874,7 @@ function hyprHandleClick(e) {
     hyprDetailId = sid;
     hyprFocused = sid;
     hyprOpenDetail(s, cl?.workspaces || []);
+    hyprRequestSummary(s);
   }
 }
 

@@ -72,8 +72,14 @@ app.whenReady().then(async () => {
   // 1. Overview populated
   rec('overview total tokens populated',
     /\d/.test(await $(win, "document.getElementById('ov-total-tokens').textContent")));
-  rec('overview sessions count = 67',
-    (await $(win, "document.getElementById('ov-combined-sessions').textContent")) === '67');
+  rec('overview Claude cost chip contains $',
+    /\$/.test(await $(win, "document.getElementById('ov-cost-claude').textContent")));
+  rec('overview Web cost chip contains $',
+    /\$/.test(await $(win, "document.getElementById('ov-cost-web').textContent")));
+  rec('overview Combined cost chip contains $',
+    /\$/.test(await $(win, "document.getElementById('ov-cost-total').textContent")));
+  rec('overview web row present',
+    (await $(win, "!!document.getElementById('ov-web-card')")) === true);
 
   // 2. Claude page cache-hit metrics
   await $(win, "navigate('claude');1"); await wait(600);
@@ -173,7 +179,7 @@ app.whenReady().then(async () => {
   })()`);
   rec('expo tile click enters workspace + closes expo', expoEnter === true);
 
-  // 6. Web tab renders limit gauges + conversations from the fixture snapshot
+  // 6. Web tab renders limit gauges + conversations + rich content from the fixture snapshot
   await $(win, "navigate('web');1"); await wait(500);
   const webLimits = await $(win, "document.querySelectorAll('#web-limits .web-limit').length");
   rec('web tab renders limit gauges', webLimits === 4, `${webLimits} gauges`);
@@ -183,6 +189,18 @@ app.whenReady().then(async () => {
     (await $(win, "document.querySelectorAll('#web-convos tr').length")) > 0);
   rec('over-90% limit flagged as warn',
     (await $(win, "!!document.querySelector('#web-limits .web-limit-pct.warn')")) === true);
+  rec('web daily chart canvas present',
+    (await $(win, "!!document.getElementById('chart-web-daily')")) === true);
+  rec('web peak hours chart canvas present',
+    (await $(win, "!!document.getElementById('chart-web-peak')")) === true);
+  rec('web model breakdown table has rows',
+    (await $(win, "document.querySelectorAll('#web-model-tbody tr').length > 0")) === true);
+  rec('web stat chips populated (conversations)',
+    /\d/.test(await $(win, "document.getElementById('web-conversations').textContent")));
+  rec('web stat chip Est. Cost contains $',
+    /\$/.test(await $(win, "document.getElementById('web-est-cost').textContent")));
+  rec('web insight card (cache savings) present',
+    (await $(win, "document.querySelectorAll('#page-web .insight-card').length > 0")) === true);
 
   rec('no console errors during run', consoleErrors.length === 0,
     consoleErrors.length ? consoleErrors.slice(0, 3).join(' | ') : '');

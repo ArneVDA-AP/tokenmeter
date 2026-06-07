@@ -214,13 +214,14 @@ function renderHeatmap(heatmap) {
 }
 
 // ── Peak Hours ─────────────────────────────────────────────────────────────
-function renderPeakHours(hourly) {
-  const canvas = document.getElementById('chart-peak-hours');
+function renderPeakHours(hourly, canvasId) {
+  const id = canvasId || 'chart-peak-hours';
+  const canvas = document.getElementById(id);
   if (!canvas || !hourly) return;
-  if (charts['chart-peak-hours']) charts['chart-peak-hours'].destroy();
+  if (charts[id]) charts[id].destroy();
 
   const maxH = Math.max(...hourly, 1);
-  charts['chart-peak-hours'] = new Chart(canvas, {
+  charts[id] = new Chart(canvas, {
     type: 'bar',
     data: {
       labels: hourly.map((_, i) => i % 6 === 0 ? `${i}h` : ''),
@@ -250,6 +251,14 @@ function renderPeakHours(hourly) {
         y: { grid: { color: themeColor('--border') }, ticks: { color: themeColor('--text-dim'), font: { family: "'Space Mono', monospace", size: 9 }, callback: v => fmtTokens(v) } },
       },
     },
+  });
+}
+
+// Build short date labels from web.daily (which has .date but not .label).
+function webDailyLabels(daily) {
+  return daily.map(d => {
+    const parts = d.date.split('-');
+    return `${parseInt(parts[1])}/${parseInt(parts[2])}`;
   });
 }
 
@@ -301,13 +310,16 @@ function checkCostAlert(data) {
 // ── Render Overview ────────────────────────────────────────────────────────
 function renderOverview(data) {
   const { claude } = data;
+  const web = data.web;
+  const combined = data.combined || {};
   const clTotal = claude.totalTokens || 0;
-  const todayEntry = (claude.daily || []).find(d => d.date === new Date().toLocaleDateString('en-CA'));
+  const webTotal = (web && web.available) ? (web.totalTokens || 0) : 0;
 
-  document.getElementById('ov-total-tokens').textContent      = fmtTokens(clTotal);
-  document.getElementById('ov-total-cost').textContent        = fmtCost(claude.estimatedCostUSD);
-  document.getElementById('ov-today').textContent             = fmtTokens(todayEntry?.totalTokens || 0);
-  document.getElementById('ov-combined-sessions').textContent = claude.totalSessions || 0;
+  // Cost chips
+  document.getElementById('ov-cost-claude').textContent  = fmtCost(combined.claudeCost ?? claude.estimatedCostUSD ?? 0);
+  document.getElementById('ov-cost-web').textContent     = fmtCost(combined.webCost ?? (web && web.available ? web.estimatedCostUSD : 0) ?? 0);
+  document.getElementById('ov-cost-total').textContent   = fmtCost(combined.totalCost ?? ((claude.estimatedCostUSD || 0) + (web && web.available ? web.estimatedCostUSD || 0 : 0)));
+  document.getElementById('ov-total-tokens').textContent = fmtTokens(clTotal + webTotal);
 
   // Claude row
   const clStatus = document.getElementById('ov-claude-status');
@@ -333,11 +345,42 @@ function renderOverview(data) {
     claudeNote.style.display = 'none';
   }
 
-  // Daily chart (Claude only)
-  const daily = claude.daily || [];
-  makeBarChart('chart-combined-daily', dailyLabels(daily), [
-    { label: 'Input',  data: daily.map(d => d.inputTokens),  backgroundColor: accentRgba(0.45),  borderRadius: 3, borderSkipped: false },
-    { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: accentRgba(0.85), borderRadius: 3, borderSkipped: false },
+  // Web row
+  const webStatus = document.getElementById('ov-web-status');
+  const webNote   = document.getElementById('ov-web-note');
+  if (web && web.available) {
+    webStatus.className = web.stale ? 'cli-status-pill inactive' : 'cli-status-pill active';
+    webStatus.textContent = web.stale ? 'Stale' : 'Synced';
+    document.getElementById('ov-web-tokens').textContent      = fmtTokens(web.totalTokens);
+    document.getElementById('ov-web-cost').textContent        = fmtCost(web.estimatedCostUSD);
+    document.getElementById('ov-web-bar').style.width         = '100%';
+    document.getElementById('ov-web-convos-count').textContent = web.totalConversations || 0;
+    document.getElementById('ov-web-models').textContent      = (web.modelBreakdown || []).length;
+    webNote.style.display = 'none';
+  } else {
+    webStatus.className = 'cli-status-pill inactive';
+    webStatus.textContent = 'Not Connected';
+    document.getElementById('ov-web-tokens').textContent      = fmtTokens(0);
+    document.getElementById('ov-web-cost').textContent        = fmtCost(0);
+    document.getElementById('ov-web-bar').style.width         = '0%';
+    document.getElementById('ov-web-convos-count').textContent = 0;
+    document.getElementById('ov-web-models').textContent      = 0;
+    webNote.style.display = 'block';
+  }
+
+  // Combined daily chart — align web daily to claude daily by date
+  const claudeDaily = claude.daily || [];
+  // Build a date→tokens map for web
+  const webDateMap = {};
+  if (web && web.available && web.daily) {
+    for (const d of web.daily) webDateMap[d.date] = d.tokens || 0;
+  }
+  const claudeTokensArr = claudeDaily.map(d => (d.inputTokens || 0) + (d.outputTokens || 0));
+  const webTokensArr = claudeDaily.map(d => webDateMap[d.date] || 0);
+
+  makeBarChart('chart-combined-daily', dailyLabels(claudeDaily), [
+    { label: 'Claude', data: claudeTokensArr, backgroundColor: accentRgba(0.8),   borderRadius: 3, borderSkipped: false },
+    { label: 'Web',    data: webTokensArr,    backgroundColor: 'rgba(74,158,255,0.7)', borderRadius: 3, borderSkipped: false },
   ]);
 }
 
@@ -974,6 +1017,24 @@ function renderWeb(data) {
   document.getElementById('web-header-sub').textContent =
     `claude.ai · ${web.totalConversations} conversations · ${fmtTokens(web.conversationTokens)} tokens`;
 
+  // Stat chips
+  const cachedPct = web.totalConversations > 0
+    ? (web.cachedConversations / web.totalConversations * 100).toFixed(1) + '%'
+    : '0%';
+  document.getElementById('web-conversations').textContent = web.totalConversations || 0;
+  document.getElementById('web-tokens').textContent        = fmtTokens(web.totalTokens);
+  document.getElementById('web-est-cost').textContent      = fmtCost(web.estimatedCostUSD);
+  document.getElementById('web-cached-pct').textContent    = cachedPct;
+
+  // Insight cards
+  document.getElementById('web-cache-savings').textContent = fmtCost(web.cacheSavingsUSD || 0);
+  document.getElementById('web-credit-balance').textContent =
+    (org.creditBalance != null) ? fmtCost(org.creditBalance / 100) : '—';
+  document.getElementById('web-extra-usage').textContent =
+    org.extraUsage
+      ? fmtCost(org.extraUsage.usedCredits / 100) + ' / ' + fmtCost(org.extraUsage.monthlyLimit / 100)
+      : '—';
+
   // Limit gauges
   const limitsEl = document.getElementById('web-limits');
   limitsEl.innerHTML = '';
@@ -992,6 +1053,39 @@ function renderWeb(data) {
     limitsEl.appendChild(div);
   }
 
+  // Daily chart
+  makeBarChart('chart-web-daily', webDailyLabels(web.daily), [{
+    label: 'Tokens', data: web.daily.map(d => d.tokens),
+    backgroundColor: accentRgba(0.8), borderRadius: 3, borderSkipped: false,
+  }]);
+
+  // Peak hours chart
+  renderPeakHours(web.hourly, 'chart-web-peak');
+
+  // Model breakdown table
+  const mtbody = document.getElementById('web-model-tbody');
+  mtbody.innerHTML = '';
+  const totalWebTokens = web.totalTokens || 1;
+  for (const m of (web.modelBreakdown || [])) {
+    const share = pct(m.tokens, totalWebTokens);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${m.model}">
+        ${m.model.length > 28 ? m.model.slice(0, 26) + '…' : m.model}
+      </td>
+      <td class="mono dim">${m.count}</td>
+      <td class="mono dim">${fmtTokens(m.tokens)}</td>
+      <td class="mono dim">${fmtCost(m.estimatedCostUSD)}</td>
+      <td>
+        <div class="table-bar-track">
+          <div class="table-bar-fill claude" style="width:${share}%"></div>
+        </div>
+        <span style="font-size:9px;color:var(--text-dim);font-family:var(--font-mono)">${share.toFixed(1)}%</span>
+      </td>
+    `;
+    mtbody.appendChild(tr);
+  }
+
   // Top conversations
   const tbody = document.getElementById('web-convos');
   tbody.innerHTML = '';
@@ -1002,7 +1096,7 @@ function renderWeb(data) {
       <td class="mono dim" title="${c.conversationId || ''}">${id || '—'}</td>
       <td class="mono dim">${(c.model || '').replace('claude-', '')}</td>
       <td class="mono dim">${fmtTokens(c.length)}</td>
-      <td class="mono dim">${c.cost || 0}</td>
+      <td class="mono dim">${fmtCost(c.estimatedCostUSD)}</td>
       <td class="mono dim">${c.cached ? 'cached' : '—'}</td>
     `;
     tbody.appendChild(tr);

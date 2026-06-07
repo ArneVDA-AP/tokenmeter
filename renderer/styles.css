@@ -238,6 +238,8 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
   transition: width 1s cubic-bezier(0.4,0,0.2,1);
 }
 .cli-bar-fill.claude { background: linear-gradient(90deg, color-mix(in srgb, var(--orange) 70%, #000), var(--orange)); }
+.cli-row.web::before { background: var(--gemini); }
+.cli-bar-fill.web { background: linear-gradient(90deg, color-mix(in srgb, var(--gemini) 70%, #000), var(--gemini)); }
 
 .cli-sub-row { display: flex; gap: 14px; flex-wrap: wrap; }
 .cli-sub-item { font-size: 10px; color: var(--text-muted); }

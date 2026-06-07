@@ -48,20 +48,20 @@
 
     <div class="stat-chips">
       <div class="stat-chip">
+        <div class="stat-chip-label">Claude Code ~$</div>
+        <div class="stat-chip-value cl" id="ov-cost-claude">—</div>
+      </div>
+      <div class="stat-chip">
+        <div class="stat-chip-label">Web ~$</div>
+        <div class="stat-chip-value" id="ov-cost-web">—</div>
+      </div>
+      <div class="stat-chip">
+        <div class="stat-chip-label">Combined ~$</div>
+        <div class="stat-chip-value grn" id="ov-cost-total">—</div>
+      </div>
+      <div class="stat-chip">
         <div class="stat-chip-label">Total Tokens</div>
         <div class="stat-chip-value" id="ov-total-tokens">—</div>
-      </div>
-      <div class="stat-chip">
-        <div class="stat-chip-label">Est. Cost</div>
-        <div class="stat-chip-value" id="ov-total-cost">—</div>
-      </div>
-      <div class="stat-chip">
-        <div class="stat-chip-label">Today</div>
-        <div class="stat-chip-value cl" id="ov-today">—</div>
-      </div>
-      <div class="stat-chip">
-        <div class="stat-chip-label">Sessions</div>
-        <div class="stat-chip-value" id="ov-combined-sessions">—</div>
       </div>
     </div>
 
@@ -84,6 +84,26 @@
         <div class="cli-sub-item"><span>Out</span><span id="ov-claude-output-val">—</span></div>
       </div>
       <div id="ov-claude-note" class="not-detected-note" style="display:none"></div>
+    </div>
+
+    <!-- Web CLI row -->
+    <div class="cli-row web" id="ov-web-card">
+      <div class="cli-row-header">
+        <div class="cli-row-name">Web (claude.ai)</div>
+        <div class="cli-status-pill inactive" id="ov-web-status">Not Connected</div>
+      </div>
+      <div class="cli-main-row">
+        <div class="cli-big-num" id="ov-web-tokens">—</div>
+        <div class="cli-cost" id="ov-web-cost">—</div>
+      </div>
+      <div class="cli-bar-track">
+        <div class="cli-bar-fill web" id="ov-web-bar"></div>
+      </div>
+      <div class="cli-sub-row">
+        <div class="cli-sub-item"><span>Conversations</span><span id="ov-web-convos-count">—</span></div>
+        <div class="cli-sub-item"><span>Models</span><span id="ov-web-models">—</span></div>
+      </div>
+      <div id="ov-web-note" class="not-detected-note" style="display:none">No web-usage data — see integration/README.md</div>
     </div>
 
     <div class="section-heading">Daily Activity (14 days)</div>
@@ -241,13 +261,71 @@
         <div class="web-tier" id="web-tier">—</div>
       </div>
 
+      <div class="stat-chips">
+        <div class="stat-chip">
+          <div class="stat-chip-label">Conversations</div>
+          <div class="stat-chip-value" id="web-conversations">—</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-label">Tokens</div>
+          <div class="stat-chip-value" id="web-tokens">—</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-label">Est. Cost</div>
+          <div class="stat-chip-value cl" id="web-est-cost">—</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-label">Cached %</div>
+          <div class="stat-chip-value" id="web-cached-pct">—</div>
+        </div>
+      </div>
+
+      <div class="insight-grid" style="grid-template-columns:1fr 1fr 1fr">
+        <div class="insight-card">
+          <div class="insight-label">Cache Savings</div>
+          <div class="insight-value" id="web-cache-savings">~$0.00</div>
+          <div class="insight-sub">saved via prompt caching</div>
+        </div>
+        <div class="insight-card">
+          <div class="insight-label">Credit Balance</div>
+          <div class="insight-value" id="web-credit-balance">—</div>
+          <div class="insight-sub">remaining</div>
+        </div>
+        <div class="insight-card">
+          <div class="insight-label">Extra Usage</div>
+          <div class="insight-value" id="web-extra-usage">—</div>
+          <div class="insight-sub">used of monthly</div>
+        </div>
+      </div>
+
       <div class="section-heading">Usage Limits</div>
       <div id="web-limits" class="web-limits"></div>
+
+      <div class="section-heading">Daily Activity (14 days)</div>
+      <div class="chart-container">
+        <canvas id="chart-web-daily" class="chart-canvas"></canvas>
+      </div>
+
+      <div class="section-heading">Peak Hours</div>
+      <div class="chart-container">
+        <canvas id="chart-web-peak" class="chart-canvas"></canvas>
+      </div>
+
+      <div class="section-heading">Model Breakdown</div>
+      <div class="chart-container" style="padding:0;overflow:hidden">
+        <table class="breakdown-table">
+          <thead><tr>
+            <th>Model</th><th>Conversations</th><th>Tokens</th><th>Est. Cost</th>
+            <th style="width:30%">Share</th>
+          </tr></thead>
+          <tbody id="web-model-tbody"></tbody>
+        </table>
+      </div>
 
       <div class="section-heading">Top Conversations</div>
       <div class="chart-container" style="padding:0;overflow:hidden">
         <table class="breakdown-table">
-          <thead><tr><th>Conversation</th><th>Model</th><th>Tokens</th><th title="extension weighted token-cost">Weight</th><th>Cache</th></tr></thead>
+          <thead><tr><th>Conversation</th><th>Model</th><th>Tokens</th><th>Est. Cost</th><th>Cache</th></tr></thead>
           <tbody id="web-convos"></tbody>
         </table>
       </div>

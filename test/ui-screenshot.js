@@ -67,7 +67,9 @@ app.whenReady().then(async () => {
 
   await go('overview'); await wait(800); await shot('1-overview');
   await go('claude');   await wait(1100); await shot('2-claude');
-  await go('sessions'); await wait(800); await shot('3-sessions');
+  await go('sessions'); await wait(700); await shot('3-sessions-live'); // default: live only
+  await win.webContents.executeJavaScript("hyprShowClosed=true; renderSessions(usageData);1");
+  await wait(600); await shot('3-sessions'); // toggled: all sessions + summaries
   await go('web');      await wait(700); await shot('5-web');
 
   // Resize to a normal window for a readable, prominent modal capture.

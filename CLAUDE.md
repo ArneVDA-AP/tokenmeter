@@ -47,7 +47,8 @@ claudePath       — override for Claude projects folder
 geminiPath       — override for Gemini sessions folder
 idleTimeout      — seconds before idle animation triggers (default 60)
 dailyCostAlert   — USD threshold for native cost alert (default 0 = off)
-sessionTheme     — Hyprland theme for the Sessions surface (default 'nord')
+sessionTheme       — Hyprland theme for the Sessions surface (default 'nord')
+sessionsShowClosed — Sessions view shows ended sessions too (default false = live only)
 ```
 
 ## Data Flow: claude-parser.js → scanner.js → IPC → renderer
@@ -64,12 +65,13 @@ sessionTheme     — Hyprland theme for the Sessions surface (default 'nord')
 - `recentSessions[10]` — latest sessions by mtime
 - `globalCacheHitPct` — `read/(read+write+input)` (see Key Rules)
 - `workspaces[]` — projects as Hyprland workspaces: `{ id, name, icon }` (id = token rank)
-- `sessions[]` — ROOT sessions (one per `.jsonl`), recency-sorted. Each carries the legacy token/cost fields PLUS: `workspace`, `agents[]`, `preview[]` (terminal lines `{type,text}`), `children[]` (ids), and `childSessions[]` (full sub-agent session objects parsed from in-file sidechains). Child sessions have `parent` set.
+- `sessions[]` — ROOT sessions (one per `.jsonl`), recency-sorted. Each carries the legacy token/cost fields PLUS: `workspace`, `agents[]`, `summary` (1–2 line title), `preview[]` (terminal lines `{type,text}`), `children[]` (ids), and `childSessions[]` (full sub-agent session objects parsed from in-file sidechains). Child sessions have `parent` set.
+- `summary` is Claude's own session title — parsed from `type:"summary"` records Claude Code writes into the `.jsonl` (the resume-picker titles). Falls back to the session's first user prompt when no summary record exists. No network/API call; fully offline.
 
 ## Renderer: What renders where
 - **Overview page** (`page-overview`): 4 stat chips, Claude CLI row, 14-day daily chart
 - **Claude page** (`page-claude`): last active card, insight cards (cache savings + projection), usage stat grid, 14-day chart, cache-hit trend (idle days = gaps, not 0%), 90-day heatmap, peak hours chart, model table, projects table with sparklines, recent sessions
-- **Sessions page** (`page-sessions` → `#hypr-root`): Hyprland compositor overview, built entirely by `renderSessions()`. Waybar (workspace pills + theme switcher + expo + stats + active count + clock), workspace strip (ALL + per-project), session grid grouped by workspace, each session a terminal-window card showing real preview lines; spawned sub-agents render as indented child windows with a dashed connector. Click a window → slide-in detail panel (`#hypr-detail`). Expo overview via the `▦ expo` button or backtick; Esc closes overlays. Theme via `#hypr-theme-sel` (persisted as `sessionTheme`).
+- **Sessions page** (`page-sessions` → `#hypr-root`): Hyprland compositor overview, built entirely by `renderSessions()`. Waybar (workspace pills + theme switcher + live/all toggle + expo + stats + active count + clock), workspace strip (ALL + per-project), session grid grouped by workspace, each session a terminal-window card; spawned sub-agents render as indented child windows with a dashed connector. **Defaults to live (active) sessions only** — the `◉ live only` waybar toggle (persisted as `sessionsShowClosed`) reveals ended sessions; the empty state offers a "show recent sessions" CTA. Active cards show a live preview + cursor; closed cards show a 1–2 line `summary` band instead. Click a window → slide-in detail panel (`#hypr-detail`, includes a SUMMARY section). Expo overview via the `▦ expo` button or backtick; Esc closes overlays. Theme via `#hypr-theme-sel` (persisted as `sessionTheme`).
 - **Bottom nav**: 4 tabs — Overview, Claude Code, Sessions, Web
 - **Creature**: fixed bottom-left, grounded; cycles IDLE_POOL + EXPRESSIVE_POOL; locks to THINK during refresh
 - **Toast**: `#toast` div, bottom-right, auto-dismisses after 3.5s

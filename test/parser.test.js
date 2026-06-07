@@ -63,6 +63,7 @@ writeSession('C--Users-dev', 'sess3.jsonl', [
 // followed by sidechain records → exercises sub-agent grouping + agent naming.
 const u = (i, o, cr, cw) => ({ input_tokens: i, output_tokens: o, cache_read_input_tokens: cr, cache_creation_input_tokens: cw });
 writeSession('C--Users-dev-desktop-projects-demo', 'sess4.jsonl', [
+  JSON.stringify({ type: 'summary', summary: 'Refactor the parser end-to-end', leafUuid: 's2' }),
   JSON.stringify({ type: 'user', uuid: 'm1', parentUuid: null, isSidechain: false, timestamp: iso(now - 600000), message: { content: 'refactor the parser' } }),
   JSON.stringify({ type: 'assistant', uuid: 'm2', parentUuid: 'm1', isSidechain: false, timestamp: iso(now - 590000), message: { model: 'claude-opus-4-20250101', usage: u(100, 60, 200, 30), content: [{ type: 'tool_use', name: 'Task', input: { subagent_type: 'verifier', description: 'verify changes' } }] } }),
   JSON.stringify({ type: 'user', uuid: 's1', parentUuid: 'm2', isSidechain: true, timestamp: iso(now - 580000), message: { content: 'verify the refactor' } }),
@@ -189,6 +190,16 @@ check('every session carries a preview ending in a cost summary', () => {
 check('sess4 preview surfaces the spawned Task as an agent line', () => {
   const s = r.sessions.find(x => x.id === 'sess4');
   assert.ok(s.preview.some(l => l.type === 'agent'), 'expected an agent-typed preview line');
+});
+
+check('sess4 surfaces the Claude-written summary record', () => {
+  const s = r.sessions.find(x => x.id === 'sess4');
+  assert.strictEqual(s.summary, 'Refactor the parser end-to-end');
+});
+
+check('sess1 falls back to first user prompt as summary (no summary record)', () => {
+  const s = r.sessions.find(x => x.id === 'sess1');
+  assert.strictEqual(s.summary, 'hi');
 });
 
 check('workspaces map projects to ids, sessions carry workspace', () => {

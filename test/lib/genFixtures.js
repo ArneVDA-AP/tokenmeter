@@ -33,6 +33,11 @@ function gen(claudeProjectsDir, opts = {}) {
   const cmds = ['npm test', 'npm run build', 'git status', 'node test/parser.test.js'];
   const notes = ['Reading project files…', 'Analyzing the module…', 'Applying edits…', 'Checking the diff…', 'Wiring it together…'];
   const subagents = ['verifier', 'general-purpose', 'Explore'];
+  const summaries = ['Refactor session view into a compositor overview',
+    'Add per-day cost tracking to the dashboard', 'Fix navbar alignment on small windows',
+    'Implement link preview cards with caching', 'Sync dotfiles across machines',
+    'Add token-bucket rate limiting middleware', 'Tidy and document the JSONL parser',
+    'Wire up the settings modal and persistence'];
   const usage = () => ({
     input_tokens: ri(200, 4000), output_tokens: ri(100, 2500),
     cache_read_input_tokens: ri(0, 40000), cache_creation_input_tokens: ri(0, 3000),
@@ -107,10 +112,14 @@ function gen(claudeProjectsDir, opts = {}) {
         }
       }
 
+      // Most sessions carry a Claude-written summary record (the resume title);
+      // the rest exercise the first-prompt fallback in the parser.
+      if (rnd() < 0.7) objs.unshift({ type: 'summary', summary: pick(summaries), leafUuid: prev });
+
       // Shift active sessions so their last activity lands a few minutes ago.
       if (active) {
         const offset = now - t - ri(1, 5) * 60000;
-        for (const o of objs) o.timestamp = new Date(new Date(o.timestamp).getTime() + offset).toISOString();
+        for (const o of objs) if (o.timestamp) o.timestamp = new Date(new Date(o.timestamp).getTime() + offset).toISOString();
         t += offset;
       }
 

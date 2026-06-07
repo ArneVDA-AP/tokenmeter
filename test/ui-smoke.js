@@ -64,18 +64,29 @@ app.whenReady().then(async () => {
   rec('cache trend chart canvas present',
     (await $(win, "!!document.getElementById('chart-cache-trend')")) === true);
 
-  // 3. Sessions tab — Hyprland compositor overview
+  // 3. Sessions tab — defaults to live (active) sessions only
   await $(win, "navigate('sessions');1"); await wait(500);
-  const winCount = await $(win, "document.querySelectorAll('#hypr-root .hypr-win').length");
-  rec('session windows render', winCount > 0, `${winCount} windows`);
+  const liveWins = await $(win, "document.querySelectorAll('#hypr-root .hypr-win').length");
+  rec('default view renders live sessions', liveWins > 0, `${liveWins} live`);
+  rec('default view shows only active sessions',
+    (await $(win, "[...document.querySelectorAll('#hypr-root .hypr-win')].every(w=>w.classList.contains('active'))")) === true);
   rec('waybar present',
     (await $(win, "!!document.querySelector('#hypr-root .hypr-bar')")) === true);
-  rec('sessions grouped into workspace sections',
-    (await $(win, "document.querySelectorAll('#hypr-root .hypr-section-head').length")) > 0);
   rec('spawned sub-agent renders as a child window',
     (await $(win, "document.querySelectorAll('#hypr-root .hypr-child').length")) > 0, '');
-  rec('an active (live) session is flagged',
-    (await $(win, "!!document.querySelector('#hypr-root .hypr-win.active')")) === true);
+
+  // 3b. Toggle reveals closed sessions, which carry a short summary line.
+  const toggled = await $(win, `(function(){
+    var before=document.querySelectorAll('#hypr-root .hypr-win').length;
+    document.querySelector('#hypr-root [data-toggle-closed]').click();
+    return { before:before,
+      after:document.querySelectorAll('#hypr-root .hypr-win').length,
+      summaries:document.querySelectorAll('#hypr-root .hypr-summary').length,
+      sections:document.querySelectorAll('#hypr-root .hypr-section-head').length };
+  })()`);
+  rec('toggle reveals closed sessions', toggled.after > toggled.before, `${toggled.before}→${toggled.after}`);
+  rec('closed sessions show a short summary', toggled.summaries > 0, `${toggled.summaries} summaries`);
+  rec('sessions grouped into workspace sections', toggled.sections > 0);
 
   // 4. Click a window → detail panel slides in, fully populated (6 stat cards).
   const opened = await $(win, `(function(){

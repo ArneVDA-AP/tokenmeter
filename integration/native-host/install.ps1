@@ -1,6 +1,6 @@
 # Installs the Tokenmeter native-messaging host for Firefox/Zen (per-user).
 #
-#   Right-click → Run with PowerShell, or:  powershell -ExecutionPolicy Bypass -File install.ps1
+#   Right-click -> Run with PowerShell, or:  powershell -ExecutionPolicy Bypass -File install.ps1
 #
 # What it does:
 #   1. Verifies Node.js is on PATH (the host launcher calls `node`).
@@ -26,7 +26,7 @@ if (-not $node) {
 if (-not (Test-Path $batPath)) { throw "Launcher not found: $batPath" }
 
 # 2. Write manifest with the resolved launcher path. allowed_extensions must
-#    match the (forked) extension's gecko id — change it here if you re-id the fork.
+#    match the (forked) extension's gecko id - change it here if you re-id the fork.
 $json = [ordered]@{
     name               = $hostName
     description        = 'Tokenmeter web-usage mirror host'
@@ -46,4 +46,4 @@ Write-Host "Registered: $regKey -> $manifest"
 Write-Host ""
 Write-Host "Done. Restart Zen/Firefox, then load the forked extension." -ForegroundColor Green
 Write-Host "Note: if Zen does not pick it up, it may use a vendor-specific registry path"
-Write-Host "instead of Mozilla\NativeMessagingHosts — check Zen's docs and adjust \$regKey."
+Write-Host "instead of Mozilla\NativeMessagingHosts - check Zen's docs and adjust the regKey."

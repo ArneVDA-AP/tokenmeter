@@ -472,6 +472,7 @@ let hyprFocused = null;   // focused/selected session id
 let hyprDetailId = null;  // session id whose detail panel is open
 let hyprExpo = false;     // expo (workspace overview) open?
 let hyprTheme = 'nord';
+let hyprShowClosed = false; // false → only live sessions; true → also show ended ones
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
@@ -510,6 +511,10 @@ function hyprWsHasActive(roots, wsId) {
   return roots.some(s => s.workspace === wsId &&
     (hyprIsActive(s) || (s.childSessions || []).some(hyprIsActive)));
 }
+// A root is shown when "live only" unless it (or one of its sub-agents) is active.
+function hyprEligible(s) {
+  return hyprShowClosed || hyprIsActive(s) || (s.childSessions || []).some(hyprIsActive);
+}
 const noTilde = (n) => fmtCost(n).replace('~', '');
 
 function renderSessions(data) {
@@ -521,7 +526,8 @@ function renderSessions(data) {
   const roots = cl?.sessions || [];
   const workspaces = cl?.workspaces || [];
   const activeCount = hyprAll(cl).filter(hyprIsActive).length;
-  const visibleRoots = hyprFilter === 'all' ? roots : roots.filter(s => s.workspace === hyprFilter);
+  const eligible = roots.filter(hyprEligible);
+  const visibleRoots = hyprFilter === 'all' ? eligible : eligible.filter(s => s.workspace === hyprFilter);
 
   rootEl.innerHTML =
     hyprWaybar(workspaces, roots, cl, activeCount) +
@@ -552,6 +558,7 @@ function hyprWaybar(workspaces, roots, cl, activeCount) {
       <div class="hypr-bar-title"><b>tokenmeter</b><span class="sep">—</span>session overview</div>
       <div class="hypr-bar-right">
         <select class="hypr-theme-sel" id="hypr-theme-sel" title="Theme">${themeOpts}</select>
+        <div class="hypr-mod btn ${hyprShowClosed ? '' : 'on'}" data-toggle-closed="1" title="${hyprShowClosed ? 'Showing all sessions — click for live only' : 'Showing live sessions only — click to include closed'}"><span>${hyprShowClosed ? '◌' : '◉'}</span><span>${hyprShowClosed ? 'all' : 'live only'}</span></div>
         <div class="hypr-mod btn ${hyprExpo ? 'on' : ''}" data-expo="1" title="Workspace overview (\`)"><span>▦</span><span>expo</span></div>
         <div class="hypr-mod"><span class="tok">◆</span><span>${cl?.totalSessions || 0} sessions</span><span class="cost">${noTilde(cl?.estimatedCostUSD || 0)}</span></div>
         ${activeCount > 0 ? `<div class="hypr-mod active-mod"><span style="color:var(--h-green)">●</span><span>${activeCount} active</span></div>` : ''}
@@ -562,7 +569,7 @@ function hyprWaybar(workspaces, roots, cl, activeCount) {
 
 function hyprStrip(workspaces, roots) {
   const btns = workspaces.map(ws => {
-    const count = roots.filter(s => s.workspace === ws.id).length;
+    const count = roots.filter(s => s.workspace === ws.id && hyprEligible(s)).length;
     return `
       <div class="hypr-strip-btn ${hyprFilter === ws.id ? 'active' : ''}" data-ws="${ws.id}">
         <span class="n">${ws.id}</span><span>${escHtml(ws.name)}</span><span class="c">${count}</span>
@@ -576,6 +583,9 @@ function hyprStrip(workspaces, roots) {
 
 function hyprGrid(visibleRoots, workspaces) {
   if (!visibleRoots.length) {
+    if (!hyprShowClosed) {
+      return `<div class="hypr-grid-wrap"><div class="hypr-empty">No live sessions right now.<br><span class="hypr-empty-cta" data-showclosed="1">▦ show recent sessions</span></div></div>`;
+    }
     return `<div class="hypr-grid-wrap"><div class="hypr-empty">no sessions in the last 90 days.</div></div>`;
   }
   if (hyprFilter === 'all') {
@@ -623,6 +633,7 @@ function hyprWin(s, isChild) {
           <div class="hypr-wago">${hyprAgo(s.endTime || s.mtime)}${active ? '<span class="hypr-pulse"></span>' : ''}</div>
         </div>
         <div class="hypr-term">
+          ${!active && s.summary ? `<div class="hypr-summary" title="${escHtml(s.summary)}">${escHtml(s.summary)}</div>` : ''}
           ${lines}
           ${active ? '<div><span class="hypr-cursor"></span></div>' : ''}
           <div class="fade"></div>
@@ -678,6 +689,7 @@ function hyprDetailHTML(s, workspaces) {
     </div></div>
     <div class="hypr-detail-body">
       <div class="hypr-stats">${statCards}</div>
+      ${s.summary ? `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SUMMARY</div><div class="hypr-doutput"><div class="ln" style="white-space:normal">${escHtml(s.summary)}</div></div></div>` : ''}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">MODELS</div>${modelRows}</div>
       ${rel}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SESSION OUTPUT</div><div class="hypr-doutput">${out}</div></div>
@@ -743,6 +755,19 @@ function hyprHandleClick(e) {
 
   const expoBtn = e.target.closest('[data-expo]');
   if (expoBtn) { hyprExpo = !hyprExpo; renderSessions(usageData); return; }
+
+  if (e.target.closest('[data-toggle-closed]')) {
+    hyprShowClosed = !hyprShowClosed;
+    tm.saveSettings({ sessionsShowClosed: hyprShowClosed }).catch(() => {});
+    renderSessions(usageData);
+    return;
+  }
+  if (e.target.closest('[data-showclosed]')) {
+    hyprShowClosed = true;
+    tm.saveSettings({ sessionsShowClosed: true }).catch(() => {});
+    renderSessions(usageData);
+    return;
+  }
 
   // A spawned-agent / parent row inside the detail panel.
   const drow = e.target.closest('.hypr-drow.card[data-sid]');
@@ -1002,6 +1027,7 @@ async function init() {
     currentSettings = settings;
     idleTimeout = (settings.idleTimeout || 60) * 1000;
     if (settings.sessionTheme && HYPR_THEMES[settings.sessionTheme]) hyprTheme = settings.sessionTheme;
+    if (typeof settings.sessionsShowClosed === 'boolean') hyprShowClosed = settings.sessionsShowClosed;
   } catch { /* use default */ }
 
   // Initial data load

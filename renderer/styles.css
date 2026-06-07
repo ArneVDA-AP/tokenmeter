@@ -612,6 +612,13 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 
 .hypr-term { position: relative; flex: 1; padding: 10px; line-height: 1.65; overflow: hidden; min-height: 86px; }
 .hypr-term .ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hypr-summary {
+  color: color-mix(in srgb, var(--h-accent) 85%, var(--h-fg));
+  font-style: italic; line-height: 1.45; white-space: normal;
+  border-left: 2px solid color-mix(in srgb, var(--h-accent) 55%, transparent);
+  padding-left: 8px; margin-bottom: 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .hypr-term .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 20px;
   background: linear-gradient(transparent, var(--h-window)); pointer-events: none; }
 .hypr-win.focused .hypr-term .fade { background: linear-gradient(transparent, var(--h-window-active)); }
@@ -640,7 +647,15 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 .m-sonnet { background: var(--h-red); }
 .m-haiku { background: var(--h-blue); }
 .m-other { background: var(--h-fg-meta); }
-.hypr-empty { text-align: center; color: var(--h-fg-meta); padding: 40px; font-size: 11px; }
+.hypr-empty { text-align: center; color: var(--h-fg-meta); padding: 40px; font-size: 11px; line-height: 2; }
+.hypr-empty-cta {
+  display: inline-block; margin-top: 12px; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  color: var(--h-accent); font-style: normal;
+  border: 1px solid color-mix(in srgb, var(--h-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--h-accent) 12%, transparent); transition: background 0.15s ease;
+}
+.hypr-empty-cta:hover { background: color-mix(in srgb, var(--h-accent) 20%, transparent); }
+.hypr-mod.btn[data-toggle-closed].on { color: var(--h-green); border-color: color-mix(in srgb, var(--h-green) 40%, transparent); background: color-mix(in srgb, var(--h-green) 12%, transparent); }
 
 /* Detail panel — slides in from the right */
 .hypr-detail {

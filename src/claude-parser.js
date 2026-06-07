@@ -67,6 +67,27 @@ function fmtTok(n) {
   return String(n);
 }
 
+// Collapse whitespace and clamp to a short single-string summary.
+function clamp(text, n) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > n ? t.slice(0, n - 1) + '…' : t;
+}
+
+// First real user prompt in a record list — the task the session was about.
+// Used as a summary fallback when the file has no Claude-written summary record.
+function firstPromptText(recs) {
+  for (const r of recs) {
+    if (r.type !== 'user') continue;
+    const c = r.content;
+    let t = '';
+    if (typeof c === 'string') t = c;
+    else if (Array.isArray(c)) { const tb = c.find(b => b && b.type === 'text'); if (tb) t = tb.text; }
+    t = (t || '').replace(/\s+/g, ' ').trim();
+    if (t && !t.startsWith('<')) return clamp(t, 160);
+  }
+  return '';
+}
+
 // Build up to MAX_PREVIEW_LINES terminal-style lines from a record list,
 // keeping the most recent activity and ending with a synthesized cost summary.
 function buildPreview(recs, sum) {
@@ -119,6 +140,7 @@ function parseClaudeJsonl(filePath) {
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split('\n');
   const records = [];
+  const summaries = []; // Claude-written session summaries (the resume-picker titles)
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -128,6 +150,12 @@ function parseClaudeJsonl(filePath) {
     if (!obj || typeof obj !== 'object') continue;
 
     const type = obj.type;
+    // Claude Code writes {type:"summary",summary,leafUuid} records when it titles
+    // or compacts a session — a ready-made short summary we can surface for free.
+    if (type === 'summary') {
+      if (obj.summary) summaries.push({ summary: String(obj.summary), leafUuid: obj.leafUuid || null });
+      continue;
+    }
     if (type !== 'assistant' && type !== 'user') continue;
     const msg = obj.message;
     if (!msg) continue;
@@ -145,7 +173,7 @@ function parseClaudeJsonl(filePath) {
     });
   }
 
-  return { records, mtime: stat.mtimeMs };
+  return { records, mtime: stat.mtimeMs, summaries };
 }
 
 // Reduce a list of records to token/cost/model/duration totals.
@@ -198,6 +226,7 @@ function makeSession(id, project, mtime, recs, agents, parent) {
     models: Object.fromEntries(sum.modelMap),
     agents,
     parent,
+    summary: firstPromptText(recs), // fallback; overridden by a Claude summary if present
     preview: buildPreview(recs, sum),
   };
 }
@@ -245,6 +274,12 @@ function buildFileSessions(fileBase, projectName, parsed) {
   }
 
   const root = makeSession(fileBase, projectName, parsed.mtime, main, ['main'], null);
+  // Prefer Claude's own summary (last one wins — most recent title) over the
+  // first-prompt fallback already set by makeSession.
+  if (parsed.summaries && parsed.summaries.length) {
+    const last = parsed.summaries[parsed.summaries.length - 1].summary;
+    if (last) root.summary = clamp(last, 160);
+  }
   const groups = groupSidechains(side);
   const childSessions = groups
     .map((g, idx) => makeSession(`${fileBase}~a${idx + 1}`, projectName, parsed.mtime, g, [taskNames[idx] || 'agent'], fileBase))

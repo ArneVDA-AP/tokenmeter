@@ -18,7 +18,8 @@ const DEFAULT_SETTINGS = {
   idleTimeout: 60,
   openAtLogin: false,
   dailyCostAlert: 0,
-  sessionTheme: 'nord', // Hyprland theme for the Sessions overview surface
+  sessionTheme: 'nord',     // Hyprland theme for the Sessions overview surface
+  sessionsShowClosed: false, // Sessions view: show ended sessions too (default: live only)
 };
 
 function fmtTokensTray(n) {

@@ -21,15 +21,19 @@ const webUsageFile = path.join(fixHome, 'web-usage.json');
 genWebUsage(webUsageFile);
 
 const settings = { refreshInterval: 0, lookbackDays: 14, claudePath: claudeProjects, geminiPath: '', webPath: webUsageFile, idleTimeout: 0, dailyCostAlert: 0, appTheme: 'tokenmeter' };
-// Mimic main.js's live-session annotation: mark ONLY the most-recently-modified
-// root session as running. This proves "active" is process-driven, not mtime-driven —
-// the second-most-recent session also has a fresh mtime but must stay hidden.
+// Mimic main.js's live-session annotation: mark ONLY one root session as running.
+// Prefer the newest session that has child sessions (so "spawned sub-agent renders
+// as a child window" can pass); fall back to the overall newest if none have children.
+// This proves "active" is process-driven, not mtime-driven — the second-most-recent
+// session also has a fresh mtime but must stay hidden.
 ipcMain.handle('get-usage-data', async () => {
   const data = await scan(settings);
   if (data.claude && Array.isArray(data.claude.sessions)) {
     data.claude.runningDetection = true;
-    const newest = data.claude.sessions.slice().sort((a, b) => b.mtime - a.mtime)[0];
-    const runId = newest ? newest.id : null;
+    const sorted = data.claude.sessions.slice().sort((a, b) => b.mtime - a.mtime);
+    const withKids = sorted.find(s => (s.childSessions || []).length > 0);
+    const chosen = withKids || sorted[0];
+    const runId = chosen ? chosen.id : null;
     for (const s of data.claude.sessions) {
       s.running = s.id === runId;
       for (const c of (s.childSessions || [])) c.running = s.running;
@@ -79,6 +83,12 @@ app.whenReady().then(async () => {
     (await $(win, "[...document.querySelectorAll('#page-claude th')].some(t=>/cache/i.test(t.textContent))")) === true);
   rec('cache trend chart canvas present',
     (await $(win, "!!document.getElementById('chart-cache-trend')")) === true);
+
+  // 2b. Sub-agent Usage section on Claude page
+  rec('sub-agent usage heading present',
+    (await $(win, "[...document.querySelectorAll('#page-claude .section-heading')].some(h=>/sub-agent/i.test(h.textContent))")) === true);
+  rec('#cl-agent-tbody exists and has at least one row',
+    (await $(win, "document.querySelectorAll('#cl-agent-tbody tr').length > 0")) === true);
 
   // 3. Sessions tab — defaults to live (active = running process) sessions only
   await $(win, "navigate('sessions');1"); await wait(500);

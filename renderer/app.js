@@ -424,6 +424,39 @@ function renderClaude(data) {
     tbody.appendChild(tr);
   }
 
+  // Sub-agent breakdown table
+  const agents = cl.agentBreakdown || [];
+  const maxAg = Math.max(1, ...agents.map(a => a.totalTokens));
+  const atbody = document.getElementById('cl-agent-tbody');
+  atbody.innerHTML = '';
+  if (agents.length === 0) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="6" class="mono dim" style="text-align:center;padding:14px;color:var(--text-dim)">no sub-agent activity in range</td>`;
+    atbody.appendChild(tr);
+  } else {
+    for (const ag of agents) {
+      const share = pct(ag.totalTokens, maxAg);
+      const agShare = pct(ag.totalTokens, cl.totalAgentTokens || 1);
+      const topModel = (ag.topModel || '');
+      const topModelDisplay = topModel.length > 24 ? topModel.slice(0, 23) + '…' : topModel;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="mono">${escHtml(ag.category)}</td>
+        <td class="mono dim">${ag.count}</td>
+        <td class="mono dim">${fmtTokens(ag.totalTokens)}</td>
+        <td class="mono dim">${fmtCost(ag.estimatedCostUSD)}</td>
+        <td class="mono dim" title="${escHtml(topModel)}">${escHtml(topModelDisplay)}</td>
+        <td>
+          <div class="table-bar-track">
+            <div class="table-bar-fill claude" style="width:${share}%"></div>
+          </div>
+          <span style="font-size:9px;color:var(--text-dim);font-family:var(--font-mono)">${agShare.toFixed(1)}% of sub-agent tokens</span>
+        </td>
+      `;
+      atbody.appendChild(tr);
+    }
+  }
+
   // Project breakdown table with sparklines
   const projects = cl.projectBreakdown || [];
   const ptbody = document.getElementById('cl-project-tbody');
@@ -720,14 +753,26 @@ function hyprWin(s, isChild) {
 function hyprDetailHTML(s, workspaces) {
   const cl = usageData?.claude;
   const active = hyprIsActive(s);
-  const stats = [
-    ['TOKENS', fmtTokens(s.totalTokens), ''],
-    ['COST', noTilde(s.estimatedCostUSD), 'cost'],
-    ['CACHE', Math.round(s.cacheHitPct || 0) + '%', 'cache'],
-    ['MSGS', s.recordCount || 0, ''],
-    ['TIME', fmtDuration(s.durationMs), ''],
-    ['STATUS', active ? 'ACTIVE' : 'ENDED', active ? 'cache' : ''],
-  ];
+  let stats;
+  if (s.isAgent) {
+    stats = [
+      ['TOKENS', fmtTokens(s.totalTokens), ''],
+      ['COST', noTilde(s.estimatedCostUSD), 'cost'],
+      ['TYPE', s.category || 'agent', ''],
+      ['MODEL', (s.model || '?').length > 14 ? (s.model || '?').slice(0, 13) + '…' : (s.model || '?'), ''],
+      ['TOOLS', s.toolUseCount || 0, ''],
+      ['STATUS', (s.status || '').toUpperCase(), s.status === 'completed' ? 'cache' : 'cost'],
+    ];
+  } else {
+    stats = [
+      ['TOKENS', fmtTokens(s.totalTokens), ''],
+      ['COST', noTilde(s.estimatedCostUSD), 'cost'],
+      ['CACHE', Math.round(s.cacheHitPct || 0) + '%', 'cache'],
+      ['MSGS', s.recordCount || 0, ''],
+      ['TIME', fmtDuration(s.durationMs), ''],
+      ['STATUS', active ? 'ACTIVE' : 'ENDED', active ? 'cache' : ''],
+    ];
+  }
   const statCards = stats.map(([l, v, c]) =>
     `<div class="hypr-stat"><div class="lbl">${l}</div><div class="val ${c}">${escHtml(String(v))}</div></div>`).join('');
 
@@ -746,7 +791,7 @@ function hyprDetailHTML(s, workspaces) {
   }
   if (s.childSessions && s.childSessions.length) {
     rel += `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SPAWNED AGENTS</div>${s.childSessions.map(c =>
-      `<div class="hypr-drow card" data-sid="${escHtml(c.id)}" style="cursor:pointer"><span class="hypr-dot ${hyprIsActive(c) ? 'run' : ''}"></span><span class="grow">${escHtml(c.agents[0])}</span><span class="tk">${fmtTokens(c.totalTokens)}</span><span class="ct">${noTilde(c.estimatedCostUSD)}</span></div>`).join('')}</div>`;
+      `<div class="hypr-drow card" data-sid="${escHtml(c.id)}" style="cursor:pointer" title="${escHtml(c.status || '')}"><span class="hypr-dot ${hyprIsActive(c) ? 'run' : ''}"></span><span class="grow">${escHtml(c.agents && c.agents[0] || '')}</span><span class="hypr-agent-cat">${escHtml(c.category || 'agent')}</span><span class="tk">${fmtTokens(c.totalTokens)}</span><span class="ct">${noTilde(c.estimatedCostUSD)}</span></div>`).join('')}</div>`;
   }
 
   const out = (s.preview || []).map(l => `<div class="ln l-${l.type}">${escHtml(l.text)}</div>`).join('');
@@ -755,6 +800,7 @@ function hyprDetailHTML(s, workspaces) {
   // or a generated one — otherwise it's just the opening prompt (the TASK).
   const summaryIsReal = s.summarySource === 'claude' || !!hyprSummaryCache[`${s.id}:${s.mtime}`];
   const summaryLabel = summaryIsReal ? 'SUMMARY' : 'TASK';
+  const outputLabel = s.isAgent ? 'AGENT RESULT' : 'SESSION OUTPUT';
   return `
     <div class="hypr-detail-head"><div class="hypr-detail-head-in">
       <div>
@@ -768,7 +814,7 @@ function hyprDetailHTML(s, workspaces) {
       ${summaryText ? `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">${summaryLabel}</div><div class="hypr-doutput"><div class="ln" style="white-space:normal">${escHtml(summaryText)}</div></div></div>` : ''}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">MODELS</div>${modelRows}</div>
       ${rel}
-      <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SESSION OUTPUT</div><div class="hypr-doutput">${out}</div></div>
+      <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">${outputLabel}</div><div class="hypr-doutput">${out}</div></div>
     </div>`;
 }
 

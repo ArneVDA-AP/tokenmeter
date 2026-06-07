@@ -694,6 +694,8 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 .hypr-drow .tk { color: var(--h-fg-dim); }
 .hypr-drow .ct { color: var(--h-yellow); }
 .hypr-drow .agentmark { color: var(--h-magenta); }
+.hypr-agent-cat { font-size:9px; color:var(--h-accent); background:color-mix(in srgb, var(--h-accent) 14%, transparent);
+  border:1px solid var(--h-border); border-radius:4px; padding:1px 5px; margin:0 6px; white-space:nowrap; }
 .hypr-doutput { background: var(--h-bg); border: 1px solid color-mix(in srgb, var(--h-border) 40%, transparent);
   border-radius: 4px; padding: 10px; line-height: 1.7; }
 .hypr-doutput .ln { white-space: pre-wrap; word-break: break-word; }

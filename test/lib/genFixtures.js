@@ -66,6 +66,7 @@ function gen(claudeProjectsDir, opts = {}) {
       const spawnAt = spawn ? ri(1, recs - 1) : -1;
       const objs = [];
       let prev = null;
+      let pendingAgent = null; // holds { tuId, agentSubtype, agentModel } when an Agent tool_use needs its result record
 
       const pu = nid();
       objs.push({ type: 'user', uuid: pu, parentUuid: prev, isSidechain: false, timestamp: new Date(t).toISOString(), message: { content: pick(prompts) } });
@@ -76,8 +77,15 @@ function gen(claudeProjectsDir, opts = {}) {
         const model = rnd() < 0.15 ? pick(models) : primary;
         let content;
         if (r === spawnAt) {
-          content = [{ type: 'text', text: 'Spawning a sub-agent to verify.' },
-                     { type: 'tool_use', name: 'Task', input: { subagent_type: pick(subagents), description: 'verify the changes' } }];
+          const agentSubtype = pick(subagents);
+          const agentModel = pick(['sonnet', 'opus', 'haiku']);
+          const tuId = `tu_${i}_${r}`;
+          content = [
+            { type: 'text', text: 'Spawning a sub-agent to verify.' },
+            { type: 'tool_use', id: tuId, name: 'Agent', input: { subagent_type: agentSubtype, description: 'verify the changes', model: agentModel } },
+          ];
+          // Remember for the paired toolUseResult user record (emitted right after).
+          pendingAgent = { tuId, agentSubtype, agentModel };
         } else if (rnd() < 0.55) {
           content = [{ type: 'tool_use', name: pick(['Edit', 'Read', 'Write', 'Grep', 'Bash']),
                        input: rnd() < 0.5 ? { file_path: pick(files) } : { command: pick(cmds) } }];
@@ -88,27 +96,39 @@ function gen(claudeProjectsDir, opts = {}) {
         objs.push({ type: 'assistant', uuid: au, parentUuid: prev, isSidechain: false, timestamp: new Date(t).toISOString(), message: { model, usage: usage(), content } });
         prev = au;
 
-        if (content[0].type === 'tool_use' && content[0].name !== 'Task' && rnd() < 0.5) {
+        if (content[0].type === 'tool_use' && content[0].name !== 'Agent' && rnd() < 0.5) {
           t += ri(2, 20) * 1000;
           const tu = nid();
           objs.push({ type: 'user', uuid: tu, parentUuid: prev, isSidechain: false, timestamp: new Date(t).toISOString(), message: { content: [{ type: 'tool_result', is_error: rnd() < 0.1, content: [{ type: 'text', text: rnd() < 0.5 ? 'Done' : '8 passing' }] }] } });
           prev = tu;
         }
 
-        if (r === spawnAt) {
-          // Sub-agent run: sidechain records descending from the Task turn.
-          let sprev = au;
-          const subTurns = ri(1, 3);
-          for (let k = 0; k < subTurns; k++) {
-            t += ri(20, 120) * 1000;
-            const su = nid();
-            objs.push({ type: 'user', uuid: su, parentUuid: sprev, isSidechain: true, timestamp: new Date(t).toISOString(), message: { content: k === 0 ? 'verify the changes' : [{ type: 'tool_result', content: [{ type: 'text', text: 'checked' }] }] } });
-            sprev = su;
-            t += ri(20, 120) * 1000;
-            const sa = nid();
-            objs.push({ type: 'assistant', uuid: sa, parentUuid: sprev, isSidechain: true, timestamp: new Date(t).toISOString(), message: { model: pick(models), usage: subUsage(), content: [k === subTurns - 1 ? { type: 'text', text: '✓ all good' } : { type: 'tool_use', name: 'Read', input: { file_path: pick(files) } }] } });
-            sprev = sa;
-          }
+        if (r === spawnAt && pendingAgent) {
+          // Modern Agent format: emit the paired toolUseResult user record.
+          const { tuId, agentSubtype, agentModel } = pendingAgent;
+          pendingAgent = null;
+          t += ri(3, 120) * 1000; // sub-agent duration
+          const subUsg = subUsage();
+          const subTotal = subUsg.input_tokens + subUsg.output_tokens;
+          const tu2 = nid();
+          objs.push({
+            type: 'user',
+            uuid: tu2,
+            parentUuid: prev,
+            isSidechain: false,
+            timestamp: new Date(t).toISOString(),
+            message: { content: [{ type: 'tool_result', tool_use_id: tuId, content: [{ type: 'text', text: '✓ all good' }] }] },
+            toolUseResult: {
+              status: 'completed',
+              agentType: agentSubtype,
+              content: '✓ all good — verified',
+              totalDurationMs: ri(3000, 120000),
+              totalTokens: subTotal,
+              totalToolUseCount: ri(1, 12),
+              usage: subUsg,
+            },
+          });
+          prev = tu2;
         }
       }
 

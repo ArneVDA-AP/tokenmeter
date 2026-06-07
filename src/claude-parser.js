@@ -181,6 +181,7 @@ function parseClaudeJsonl(filePath) {
       model: msg.model || null,
       usage: (type === 'assistant' && msg.usage) ? msg.usage : null,
       content: msg.content,
+      toolUseResult: obj.toolUseResult || null,
     });
   }
 
@@ -242,6 +243,110 @@ function makeSession(id, project, mtime, recs, agents, parent) {
   };
 }
 
+// Collect modern Agent/Task tool_use invocations from the main-chain records.
+// Returns an ordered array of { id, input, ts } objects (the assistant tool_use blocks)
+// and a resultsById Map (tool_use_id → { toolUseResult, ts }) built from user records
+// that carry a tool_result block paired with a toolUseResult top-level field.
+function collectAgentUses(records) {
+  // Build a map from tool_use_id → { toolUseResult, ts } from user records
+  // that have both a tool_result content block and a top-level toolUseResult.
+  const resultsById = new Map();
+  for (const rec of records) {
+    if (rec.type !== 'user') continue;
+    if (!rec.toolUseResult) continue;
+    const c = rec.content;
+    if (!Array.isArray(c)) continue;
+    for (const b of c) {
+      if (b && b.type === 'tool_result' && b.tool_use_id) {
+        resultsById.set(b.tool_use_id, { toolUseResult: rec.toolUseResult, ts: rec.ts });
+      }
+    }
+  }
+
+  // Collect Agent/Task tool_use blocks from assistant records.
+  const uses = [];
+  for (const rec of records) {
+    if (rec.type !== 'assistant') continue;
+    const c = rec.content;
+    if (!Array.isArray(c)) continue;
+    for (const b of c) {
+      if (b && b.type === 'tool_use' && (b.name === 'Agent' || b.name === 'Task') && b.id) {
+        uses.push({ id: b.id, input: b.input || {}, ts: rec.ts });
+      }
+    }
+  }
+
+  return { uses, resultsById };
+}
+
+// Build a child session object from a single Agent/Task tool_use invocation.
+function makeAgentChild(fileBase, projectName, mtime, idx, use, resultsById, parentModel) {
+  const tur = (resultsById.get(use.id) || {}).toolUseResult || {};
+  const rawUsage = tur.usage || {};
+
+  let i = rawUsage.input_tokens || 0;
+  let o = rawUsage.output_tokens || 0;
+  let cr = rawUsage.cache_read_input_tokens || 0;
+  let cw = rawUsage.cache_creation_input_tokens || 0;
+
+  // If usage has no token fields but totalTokens is available, use it as output proxy.
+  if (i === 0 && o === 0 && cr === 0 && cw === 0 && tur.totalTokens) {
+    o = tur.totalTokens;
+  }
+
+  const model = (use.input.model || parentModel || 'unknown').toLowerCase();
+  const cost = calcClaudeCost(model, i, o, cr, cw);
+  const name = clamp(use.input.description || use.input.subagent_type || 'agent', 80);
+  const category = use.input.subagent_type || tur.agentType || 'agent';
+  const status = tur.status || 'running';
+  const toolUseCount = tur.totalToolUseCount || 0;
+  const durationMs = tur.totalDurationMs || 0;
+  const ts = use.ts || mtime;
+  const result = clamp(toolResultText(tur.content), 200);
+
+  const preview = [
+    { type: 'agent', text: `⊳ ${category} · ${name}` },
+    result ? { type: 'output', text: firstLine(result) } : null,
+    { type: 'cost', text: `↳ ${fmtTok(i + o)} tok · $${cost.toFixed(2)} · ${status}` },
+  ].filter(Boolean);
+
+  return {
+    id: `${fileBase}~a${idx + 1}`,
+    project: projectName,
+    mtime,
+    startTime: ts,
+    endTime: ts + durationMs,
+    durationMs,
+    recordCount: toolUseCount,
+    inputTokens: i,
+    outputTokens: o,
+    cacheReadTokens: cr,
+    cacheWriteTokens: cw,
+    totalTokens: i + o,
+    estimatedCostUSD: cost,
+    cacheHitPct: cacheHitPct(cr, i, cw),
+    model,
+    models: {
+      [model]: {
+        inputTokens: i, outputTokens: o,
+        cacheReadTokens: cr, cacheWriteTokens: cw,
+        estimatedCostUSD: cost,
+      },
+    },
+    agents: [name],
+    parent: fileBase,
+    category,
+    status,
+    toolUseCount,
+    result,
+    ts,
+    isAgent: true,
+    summary: name,
+    summarySource: 'agent',
+    preview,
+  };
+}
+
 // Group sidechain (sub-agent / Task) records into connected runs. Each run is a
 // distinct spawned agent; the run's root is the topmost sidechain record whose
 // parent is NOT itself a sidechain (i.e. it descends from the main chain).
@@ -271,19 +376,6 @@ function buildFileSessions(fileBase, projectName, parsed) {
   const main = parsed.records.filter(r => !r.isSidechain);
   const side = parsed.records.filter(r => r.isSidechain);
 
-  // Names for spawned agents, harvested from Task tool_use blocks in the main chain.
-  const taskNames = [];
-  for (const r of main) {
-    if (r.type === 'assistant' && Array.isArray(r.content)) {
-      for (const b of r.content) {
-        if (b && b.type === 'tool_use' && b.name === 'Task') {
-          const inp = b.input || {};
-          taskNames.push(inp.subagent_type || inp.description || 'agent');
-        }
-      }
-    }
-  }
-
   const root = makeSession(fileBase, projectName, parsed.mtime, main, ['main'], null);
   // Prefer Claude's own summary (last one wins — most recent title) over the
   // first-prompt fallback already set by makeSession. `summarySource` tells the
@@ -294,10 +386,22 @@ function buildFileSessions(fileBase, projectName, parsed) {
     const last = parsed.summaries[parsed.summaries.length - 1].summary;
     if (last) { root.summary = clamp(last, 160); root.summarySource = 'claude'; }
   }
-  const groups = groupSidechains(side);
-  const childSessions = groups
-    .map((g, idx) => makeSession(`${fileBase}~a${idx + 1}`, projectName, parsed.mtime, g, [taskNames[idx] || 'agent'], fileBase))
-    .filter(c => c.recordCount > 0);
+
+  // Modern path: detect Agent/Task tool_use blocks + paired toolUseResult.
+  const { uses: agentUses, resultsById } = collectAgentUses(parsed.records);
+
+  let childSessions;
+  if (agentUses.length > 0) {
+    // Modern Agent format: synthesize one child per invocation from tool_use + toolUseResult.
+    childSessions = agentUses.map((u, idx) =>
+      makeAgentChild(fileBase, projectName, parsed.mtime, idx, u, resultsById, root.model));
+  } else {
+    // Back-compat: old logs that store sub-agents as inline isSidechain records.
+    const groups = groupSidechains(side);
+    childSessions = groups
+      .map((g, idx) => makeSession(`${fileBase}~a${idx + 1}`, projectName, parsed.mtime, g, ['agent'], fileBase))
+      .filter(c => c.recordCount > 0);
+  }
 
   root.children = childSessions.map(c => c.id);
   root.childSessions = childSessions;
@@ -405,6 +509,132 @@ function aggregateClaude(claudeDir) {
     totalCost += projCost;
   }
 
+  // Fold child (Agent) tokens into all global aggregations.
+  // Children are NOT in parsed.records, so this is the only place they get counted.
+  const agentMap = new Map(); // category → aggregated breakdown
+  for (const root of allSessions) {
+    for (const c of (root.childSessions || [])) {
+      const projectName = c.project;
+      // project-level accumulators
+      if (projectMap.has(projectName)) {
+        const p = projectMap.get(projectName);
+        p.inputTokens += c.inputTokens;
+        p.outputTokens += c.outputTokens;
+        p.cacheReadTokens += c.cacheReadTokens;
+        p.cacheWriteTokens += c.cacheWriteTokens;
+        p.totalTokens += c.totalTokens;
+        p.estimatedCostUSD += c.estimatedCostUSD;
+      } else {
+        projectMap.set(projectName, {
+          name: projectName,
+          inputTokens: c.inputTokens, outputTokens: c.outputTokens,
+          cacheReadTokens: c.cacheReadTokens, cacheWriteTokens: c.cacheWriteTokens,
+          totalTokens: c.totalTokens, estimatedCostUSD: c.estimatedCostUSD, sessionCount: 0,
+        });
+      }
+      // global accumulators
+      totalInput += c.inputTokens;
+      totalOutput += c.outputTokens;
+      totalCacheRead += c.cacheReadTokens;
+      totalCacheWrite += c.cacheWriteTokens;
+      totalCost += c.estimatedCostUSD;
+
+      // hourly
+      hourlyMap[new Date(c.ts).getHours()] += c.totalTokens;
+
+      // daily
+      const dateKey = new Date(c.ts).toLocaleDateString('en-CA');
+      if (!dailyMap.has(dateKey)) {
+        dailyMap.set(dateKey, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUSD: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+      }
+      const day = dailyMap.get(dateKey);
+      day.inputTokens += c.inputTokens;
+      day.outputTokens += c.outputTokens;
+      day.totalTokens += c.totalTokens;
+      day.estimatedCostUSD += c.estimatedCostUSD;
+      day.cacheReadTokens += c.cacheReadTokens;
+      day.cacheWriteTokens += c.cacheWriteTokens;
+
+      // project daily sparkline
+      if (!projectDailyMap.has(projectName)) projectDailyMap.set(projectName, new Map());
+      const pdm = projectDailyMap.get(projectName);
+      pdm.set(dateKey, (pdm.get(dateKey) || 0) + c.totalTokens);
+
+      // cache savings
+      totalCacheSavings += calcCacheSavings(c.model, c.cacheReadTokens);
+
+      // model breakdown
+      if (!modelMap.has(c.model)) {
+        modelMap.set(c.model, { inputTokens: 0, outputTokens: 0, estimatedCostUSD: 0 });
+      }
+      const mm = modelMap.get(c.model);
+      mm.inputTokens += c.inputTokens;
+      mm.outputTokens += c.outputTokens;
+      mm.estimatedCostUSD += c.estimatedCostUSD;
+
+      // agent category breakdown
+      const cat = c.category || 'agent';
+      if (!agentMap.has(cat)) {
+        agentMap.set(cat, {
+          category: cat, count: 0,
+          inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+          totalTokens: 0, estimatedCostUSD: 0, durationMs: 0,
+          models: new Map(),
+        });
+      }
+      const agg = agentMap.get(cat);
+      agg.count++;
+      agg.inputTokens += c.inputTokens;
+      agg.outputTokens += c.outputTokens;
+      agg.cacheReadTokens += c.cacheReadTokens;
+      agg.cacheWriteTokens += c.cacheWriteTokens;
+      agg.totalTokens += c.totalTokens;
+      agg.estimatedCostUSD += c.estimatedCostUSD;
+      agg.durationMs += c.durationMs || 0;
+      if (!agg.models.has(c.model)) agg.models.set(c.model, { inputTokens: 0, outputTokens: 0, estimatedCostUSD: 0 });
+      const am = agg.models.get(c.model);
+      am.inputTokens += c.inputTokens;
+      am.outputTokens += c.outputTokens;
+      am.estimatedCostUSD += c.estimatedCostUSD;
+    }
+  }
+
+  // Build agent breakdown (sorted by totalTokens desc).
+  const agentBreakdown = Array.from(agentMap.values())
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+    .map(agg => {
+      // Convert models Map → plain object; find topModel by most tokens.
+      let topModel = 'unknown', topTok = -1;
+      const modelsObj = {};
+      for (const [mname, mdata] of agg.models.entries()) {
+        modelsObj[mname] = mdata;
+        if (mdata.inputTokens + mdata.outputTokens > topTok) {
+          topTok = mdata.inputTokens + mdata.outputTokens;
+          topModel = mname;
+        }
+      }
+      return {
+        category: agg.category,
+        count: agg.count,
+        inputTokens: agg.inputTokens,
+        outputTokens: agg.outputTokens,
+        cacheReadTokens: agg.cacheReadTokens,
+        cacheWriteTokens: agg.cacheWriteTokens,
+        totalTokens: agg.totalTokens,
+        estimatedCostUSD: agg.estimatedCostUSD,
+        durationMs: agg.durationMs,
+        models: modelsObj,
+        topModel,
+      };
+    });
+
+  let totalAgentTokens = 0, totalAgentCostUSD = 0, totalAgentInvocations = 0;
+  for (const agg of agentBreakdown) {
+    totalAgentTokens += agg.totalTokens;
+    totalAgentCostUSD += agg.estimatedCostUSD;
+    totalAgentInvocations += agg.count;
+  }
+
   // Build daily array for last 14 days
   const daily = buildDailyArray(dailyMap, 14);
 
@@ -469,6 +699,10 @@ function aggregateClaude(claudeDir) {
     recentSessions: sortedSessions,
     sessions: allSessionsByRecency,
     dataNote,
+    agentBreakdown,
+    totalAgentTokens,
+    totalAgentCostUSD,
+    totalAgentInvocations,
   };
 }
 

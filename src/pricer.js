@@ -17,7 +17,12 @@ function getClaudePrice(modelName) {
   let bestLen = 0;
   for (const entry of table.claude) {
     if (entry.pattern === 'default') continue;
-    if (model.includes(entry.pattern) && entry.pattern.length > bestLen) {
+    // Forward match: full model id contains the pattern (e.g. 'claude-sonnet-4-20250514' includes 'claude-sonnet-4').
+    // Reverse match: short alias is contained by the pattern (e.g. pattern 'claude-sonnet-4' includes alias 'sonnet').
+    // Rank by pattern.length so longer / more specific patterns always win.
+    const matches = model.includes(entry.pattern) ||
+      (model.length >= 3 && entry.pattern.includes(model));
+    if (matches && entry.pattern.length > bestLen) {
       best = entry;
       bestLen = entry.pattern.length;
     }
@@ -33,7 +38,10 @@ function getGeminiPrice(modelName) {
   let bestLen = 0;
   for (const entry of table.gemini) {
     if (entry.pattern === 'default') continue;
-    if (model.includes(entry.pattern) && entry.pattern.length > bestLen) {
+    // Same bidirectional matching as getClaudePrice.
+    const matches = model.includes(entry.pattern) ||
+      (model.length >= 3 && entry.pattern.includes(model));
+    if (matches && entry.pattern.length > bestLen) {
       best = entry;
       bestLen = entry.pattern.length;
     }

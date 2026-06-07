@@ -280,6 +280,20 @@ function collectAgentUses(records) {
 }
 
 // Build a child session object from a single Agent/Task tool_use invocation.
+// Sub-agent input.model is often a short alias ('sonnet'/'opus'/'haiku') that
+// doesn't pin a generation. Normalize bare aliases to a canonical current-gen id
+// so they price correctly (no ambiguous reverse-match) and read cleanly in the
+// model table; leave real model ids untouched.
+function canonicalModel(m) {
+  const s = String(m || '').toLowerCase();
+  if (!s) return 'unknown';
+  if (s.includes('claude-') || s.includes('gemini-')) return s;
+  if (s.includes('opus'))   return 'claude-opus-4';
+  if (s.includes('sonnet')) return 'claude-sonnet-4';
+  if (s.includes('haiku'))  return 'claude-haiku-4';
+  return s;
+}
+
 function makeAgentChild(fileBase, projectName, mtime, idx, use, resultsById, parentModel) {
   const tur = (resultsById.get(use.id) || {}).toolUseResult || {};
   const rawUsage = tur.usage || {};
@@ -294,7 +308,7 @@ function makeAgentChild(fileBase, projectName, mtime, idx, use, resultsById, par
     o = tur.totalTokens;
   }
 
-  const model = (use.input.model || parentModel || 'unknown').toLowerCase();
+  const model = canonicalModel(use.input.model || parentModel || 'unknown');
   const cost = calcClaudeCost(model, i, o, cr, cw);
   const name = clamp(use.input.description || use.input.subagent_type || 'agent', 80);
   const category = use.input.subagent_type || tur.agentType || 'agent';
@@ -514,6 +528,7 @@ function aggregateClaude(claudeDir) {
   const agentMap = new Map(); // category → aggregated breakdown
   for (const root of allSessions) {
     for (const c of (root.childSessions || [])) {
+      if (!c.isAgent) continue; // legacy sidechain children are already counted by the main records loop
       const projectName = c.project;
       // project-level accumulators
       if (projectMap.has(projectName)) {

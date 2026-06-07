@@ -519,6 +519,7 @@ function escHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 function hyprIsActive(s) {
+  if (s.isAgent) return s.status === 'running'; // sub-agents are live only while in-flight, never a time/terminal heuristic
   const cl = usageData?.claude;
   if (cl && cl.runningDetection) return s.running === true;          // strict: terminal open, no time limit
   return (Date.now() - Math.max(s.mtime || 0, s.endTime || 0)) < HYPR_ACTIVE_MS; // fallback when detection unavailable

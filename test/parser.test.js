@@ -295,31 +295,39 @@ check('totalAgentTokens > 0', () => {
     `totalAgentTokens=${r.totalAgentTokens}`);
 });
 
-check('totalAgentInvocations matches sum of childSessions across all sessions', () => {
-  const expected = r.sessions.reduce((sum, s) => sum + (s.childSessions ? s.childSessions.length : 0), 0);
+// agentBreakdown / totals fold ONLY modern Agent children. Legacy sidechain
+// children are already counted by the main records loop, so they must NOT be
+// folded again (that was the double-count BLOCKER).
+const isAgentChildren = (s) => (s.childSessions || []).filter(c => c.isAgent);
+
+check('totalAgentInvocations counts only modern Agent children', () => {
+  const expected = r.sessions.reduce((sum, s) => sum + isAgentChildren(s).length, 0);
   assert.strictEqual(r.totalAgentInvocations, expected,
     `totalAgentInvocations=${r.totalAgentInvocations} expected=${expected}`);
 });
 
-check('totalAgentTokens matches sum of child totalTokens', () => {
-  const expected = r.sessions.reduce((sum, s) => {
-    return sum + (s.childSessions || []).reduce((cs, c) => cs + c.totalTokens, 0);
-  }, 0);
+check('totalAgentTokens matches sum of Agent child totalTokens', () => {
+  const expected = r.sessions.reduce((sum, s) =>
+    sum + isAgentChildren(s).reduce((cs, c) => cs + c.totalTokens, 0), 0);
   assert.strictEqual(r.totalAgentTokens, expected,
     `totalAgentTokens=${r.totalAgentTokens} expected=${expected}`);
 });
 
-check('global totalTokens includes child tokens (main-chain + agents)', () => {
-  // Main-chain tokens only (from parsed.records usage fields).
-  // sess1: 300+130=430, sess2: 0, sess3: 75, sess4 main: 100+60=160
-  // sess5 main: 150+70=220
-  // Sidechain child of sess4 (via sidechain records, NOT counted in parsed.records for main):
-  //   but wait — sidechain records ARE in parsed.records (isSidechain doesn't exclude them
-  //   from the records array). Let's just assert r.totalTokens >= main + agents.
-  const childTok = r.sessions.reduce((sum, s) =>
-    sum + (s.childSessions || []).reduce((cs, c) => cs + c.totalTokens, 0), 0);
-  assert.ok(r.totalTokens >= childTok, `totalTokens ${r.totalTokens} should include ${childTok} child tokens`);
-  assert.ok(r.totalAgentTokens === childTok, `totalAgentTokens ${r.totalAgentTokens} !== childTok ${childTok}`);
+check('legacy sidechain tokens counted exactly once (no double-count)', () => {
+  // Main loop counts every assistant record incl. sidechain ones:
+  //   sess1 430 + sess2 0 + sess3 75 + sess4(main 160 + sidechain 60) + sess5 main 220 = 945
+  // Plus folded modern Agent child (sess5 child = 120). sess4's sidechain child
+  // must NOT be folded again, so the exact total is 945 + 120 = 1065.
+  assert.strictEqual(r.totalTokens, 1065, `totalTokens=${r.totalTokens} (double-count would give 1125)`);
+  assert.strictEqual(r.totalAgentTokens, 120, `totalAgentTokens=${r.totalAgentTokens} (only sess5 agent child)`);
+});
+
+check('agentBreakdown excludes legacy sidechain children', () => {
+  // sess4's verifier is a legacy sidechain child; the only modern agent is sess5's
+  // verifier. So the breakdown's verifier count must be 1, not 2.
+  const verifier = r.agentBreakdown.find(a => a.category === 'verifier');
+  assert.ok(verifier, 'expected a verifier agent entry from sess5');
+  assert.strictEqual(verifier.count, 1, `verifier count=${verifier.count} (legacy sidechain leaked in?)`);
 });
 
 // ── Misc regressions ──────────────────────────────────────────────────────────

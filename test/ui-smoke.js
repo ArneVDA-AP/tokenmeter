@@ -96,13 +96,13 @@ app.whenReady().then(async () => {
     return {
       wins: document.querySelectorAll('#hypr-root .hypr-win').length,
       branches: document.querySelectorAll('#hypr-root .hypr-branch').length,
-      allActive: [...document.querySelectorAll('#hypr-root .hypr-win')].every(w=>w.classList.contains('active')),
+      rootsActive: [...document.querySelectorAll('#hypr-root .hypr-win')].filter(w=>!w.closest('.hypr-child')).every(w=>w.classList.contains('active')),
       children: document.querySelectorAll('#hypr-root .hypr-child').length,
     };
   })()`);
   rec('default view renders the running session', live.wins > 0, `${live.wins} wins`);
   rec('only running sessions shown (recent-but-not-running hidden)', live.branches === 1, `${live.branches} root(s)`);
-  rec('every shown session is marked active', live.allActive === true);
+  rec('every shown root session is marked active', live.rootsActive === true);
   rec('waybar present',
     (await $(win, "!!document.querySelector('#hypr-root .hypr-bar')")) === true);
   rec('spawned sub-agent renders as a child window', live.children > 0, `${live.children}`);

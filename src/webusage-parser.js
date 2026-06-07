@@ -121,8 +121,11 @@ function aggregateWebUsage(webUsagePath) {
 
   const dailyMap = new Map();
   for (const c of conversations) {
-    if (!c.lastMessageTimestamp) continue;
-    const ts = c.lastMessageTimestamp;
+    // Fall back to the snapshot time so conversations without their own
+    // lastMessageTimestamp still land in the chart (keeps daily reconciled
+    // with the headline token total instead of silently dropping them).
+    const ts = c.lastMessageTimestamp || generatedAt;
+    if (!ts) continue;
     if (ts < cutoffTs) continue;
     const dateKey = new Date(ts).toLocaleDateString('en-CA');
     if (!dailyMap.has(dateKey)) {
@@ -146,8 +149,9 @@ function aggregateWebUsage(webUsagePath) {
   // ── hourly array (24 elements, indexed by hour of day) ───────────────────────
   const hourly = new Array(24).fill(0);
   for (const c of conversations) {
-    if (!c.lastMessageTimestamp) continue;
-    const hr = new Date(c.lastMessageTimestamp).getHours();
+    const ts = c.lastMessageTimestamp || generatedAt;
+    if (!ts) continue;
+    const hr = new Date(ts).getHours();
     hourly[hr] += c.length || 0;
   }
 
@@ -180,9 +184,11 @@ function aggregateWebUsage(webUsagePath) {
   }
 
   // ── topConversations (enriched with estimatedCostUSD) ────────────────────────
+  // Rank by the estimated ~$ we actually display in the table (not the
+  // extension's internal weighted-cost unit), so order matches the column.
   const topConversations = conversations
     .slice()
-    .sort((a, b) => (b.cost || 0) - (a.cost || 0))
+    .sort((a, b) => estConvCostUSD(b) - estConvCostUSD(a))
     .slice(0, 10)
     .map(c => ({
       conversationId: c.conversationId,

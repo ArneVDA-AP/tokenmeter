@@ -202,6 +202,25 @@ app.whenReady().then(async () => {
   rec('web insight card (cache savings) present',
     (await $(win, "document.querySelectorAll('#page-web .insight-card').length > 0")) === true);
 
+  // 2d. Web UNAVAILABLE path — the common case until the mirror is set up.
+  // renderOverview + renderWeb must not throw, the empty state must show, and the
+  // overview web row must read "Not Connected". Restores real data afterwards.
+  const unavail = await $(win, `(function(){
+    try {
+      var d = Object.assign({}, usageData);
+      d.web = { available:false, dataNote:'No web-usage data found.' };
+      d.combined = Object.assign({}, d.combined, { webCost:0, webTokens:0, totalCost:(d.combined.claudeCost||0) });
+      renderOverview(d); renderWeb(d);
+      var emptyShown = getComputedStyle(document.getElementById('web-empty')).display !== 'none';
+      var contentHidden = getComputedStyle(document.getElementById('web-content')).display === 'none';
+      var notConnected = /not connected/i.test(document.getElementById('ov-web-status').textContent);
+      renderOverview(usageData); renderWeb(usageData); // restore live data
+      return emptyShown && contentHidden && notConnected;
+    } catch (e) { return 'THREW: ' + e.message; }
+  })()`);
+  rec('web unavailable path: renderers do not throw + empty state shown', unavail === true,
+    typeof unavail === 'string' ? unavail : '');
+
   rec('no console errors during run', consoleErrors.length === 0,
     consoleErrors.length ? consoleErrors.slice(0, 3).join(' | ') : '');
 

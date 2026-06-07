@@ -368,17 +368,21 @@ function renderOverview(data) {
     webNote.style.display = 'block';
   }
 
-  // Combined daily chart — align web daily to claude daily by date
+  // Combined daily chart — Claude + Web stacked, aligned by date. Prefer Claude's
+  // day axis (it carries .label); fall back to Web's days when Claude has no data
+  // (e.g. a web-only user) so web activity still shows.
   const claudeDaily = claude.daily || [];
-  // Build a date→tokens map for web
+  const webDaily = (web && web.available && web.daily) ? web.daily : [];
+  const axisDays = claudeDaily.length ? claudeDaily : webDaily;
+  const labels = claudeDaily.length ? dailyLabels(claudeDaily) : webDailyLabels(webDaily);
   const webDateMap = {};
-  if (web && web.available && web.daily) {
-    for (const d of web.daily) webDateMap[d.date] = d.tokens || 0;
-  }
-  const claudeTokensArr = claudeDaily.map(d => (d.inputTokens || 0) + (d.outputTokens || 0));
-  const webTokensArr = claudeDaily.map(d => webDateMap[d.date] || 0);
+  for (const d of webDaily) webDateMap[d.date] = d.tokens || 0;
+  const claudeDateMap = {};
+  for (const d of claudeDaily) claudeDateMap[d.date] = (d.inputTokens || 0) + (d.outputTokens || 0);
+  const claudeTokensArr = axisDays.map(d => claudeDateMap[d.date] || 0);
+  const webTokensArr = axisDays.map(d => webDateMap[d.date] || 0);
 
-  makeBarChart('chart-combined-daily', dailyLabels(claudeDaily), [
+  makeBarChart('chart-combined-daily', labels, [
     { label: 'Claude', data: claudeTokensArr, backgroundColor: accentRgba(0.8),   borderRadius: 3, borderSkipped: false },
     { label: 'Web',    data: webTokensArr,    backgroundColor: 'rgba(74,158,255,0.7)', borderRadius: 3, borderSkipped: false },
   ]);
@@ -1032,7 +1036,7 @@ function renderWeb(data) {
     (org.creditBalance != null) ? fmtCost(org.creditBalance / 100) : '—';
   document.getElementById('web-extra-usage').textContent =
     org.extraUsage
-      ? fmtCost(org.extraUsage.usedCredits / 100) + ' / ' + fmtCost(org.extraUsage.monthlyLimit / 100)
+      ? fmtCost((org.extraUsage.usedCredits ?? 0) / 100) + ' / ' + fmtCost((org.extraUsage.monthlyLimit ?? 0) / 100)
       : '—';
 
   // Limit gauges

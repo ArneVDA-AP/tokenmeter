@@ -49,6 +49,7 @@ idleTimeout      — seconds before idle animation triggers (default 60)
 dailyCostAlert   — USD threshold for native cost alert (default 0 = off)
 sessionTheme       — Hyprland theme for the Sessions surface (default 'nord')
 sessionsShowClosed — Sessions view shows ended sessions too (default false = live only)
+sessionSummaries   — Generate closed-session summaries via local `claude -p` (default true)
 ```
 
 ## Data Flow: claude-parser.js → scanner.js → IPC → renderer
@@ -66,7 +67,7 @@ sessionsShowClosed — Sessions view shows ended sessions too (default false = l
 - `globalCacheHitPct` — `read/(read+write+input)` (see Key Rules)
 - `workspaces[]` — projects as Hyprland workspaces: `{ id, name, icon }` (id = token rank)
 - `sessions[]` — ROOT sessions (one per `.jsonl`), recency-sorted. Each carries the legacy token/cost fields PLUS: `workspace`, `agents[]`, `summary` (1–2 line title), `preview[]` (terminal lines `{type,text}`), `children[]` (ids), and `childSessions[]` (full sub-agent session objects parsed from in-file sidechains). Child sessions have `parent` set.
-- `summary` is Claude's own session title — parsed from `type:"summary"` records Claude Code writes into the `.jsonl` (the resume-picker titles). Falls back to the session's first user prompt when no summary record exists. No network/API call; fully offline.
+- `summary` is Claude's own session title — parsed from `type:"summary"` records Claude Code writes into the `.jsonl` (the resume-picker titles); `summarySource: 'claude'`. When absent, `summary` falls back to the first user prompt (`summarySource: 'prompt'`), and the renderer upgrades closed cards by shelling out to the local **`claude -p --model haiku`** CLI (main.js, `summarize-session` IPC) — uses the user's existing Claude Code auth, no API key/network config. Generated summaries are cached in electron-store (`summaryCache`, key `id:mtime`) and the prompts carry `SUMMARY_MARKER` so the parser skips these throwaway sessions (they'd otherwise pollute totals). Toggle via the `sessionSummaries` setting.
 
 ## Renderer: What renders where
 - **Overview page** (`page-overview`): 4 stat chips, Claude CLI row, 14-day daily chart
@@ -83,6 +84,7 @@ sessionsShowClosed — Sessions view shows ended sessions too (default false = l
 | `get-usage-data` | renderer → main | Triggers scan, returns full data object |
 | `get-settings` | renderer → main | Returns current settings |
 | `save-settings` | renderer → main | Persists settings, restarts refresh timer |
+| `summarize-session` | renderer → main | Generates/caches a closed-session summary via local `claude -p` |
 | `window-minimize/maximize/close` | renderer → main | Window controls |
 | `open-external` | renderer → main | Opens URL in browser |
 | `show-notification` | renderer → main | Fires native OS notification |

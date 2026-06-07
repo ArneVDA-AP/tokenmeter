@@ -39,6 +39,7 @@ ipcMain.handle('window-maximize', () => {});
 ipcMain.handle('window-close', () => {});
 ipcMain.handle('open-external', () => {});
 ipcMain.handle('show-notification', () => {});
+ipcMain.handle('summarize-session', () => ({ available: false }));
 
 const OUT = path.join(__dirname, 'shots');
 fs.mkdirSync(OUT, { recursive: true });

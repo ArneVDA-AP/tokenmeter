@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const assert = require('assert');
 
-const { aggregateClaude } = require('../src/claude-parser');
+const { aggregateClaude, SUMMARY_MARKER } = require('../src/claude-parser');
 
 let failures = 0;
 function check(name, fn) {
@@ -68,6 +68,12 @@ writeSession('C--Users-dev-desktop-projects-demo', 'sess4.jsonl', [
   JSON.stringify({ type: 'assistant', uuid: 'm2', parentUuid: 'm1', isSidechain: false, timestamp: iso(now - 590000), message: { model: 'claude-opus-4-20250101', usage: u(100, 60, 200, 30), content: [{ type: 'tool_use', name: 'Task', input: { subagent_type: 'verifier', description: 'verify changes' } }] } }),
   JSON.stringify({ type: 'user', uuid: 's1', parentUuid: 'm2', isSidechain: true, timestamp: iso(now - 580000), message: { content: 'verify the refactor' } }),
   JSON.stringify({ type: 'assistant', uuid: 's2', parentUuid: 's1', isSidechain: true, timestamp: iso(now - 570000), message: { model: 'claude-sonnet-4-20250101', usage: u(40, 20, 60, 0), content: [{ type: 'text', text: 'All good' }] } }),
+]);
+
+// Tokenmeter's own `claude -p` summary run — must be excluded from the meter.
+writeSession('C--Users-dev-desktop-projects-demo', 'meta.jsonl', [
+  JSON.stringify({ type: 'user', timestamp: iso(now - 100000), message: { content: `${SUMMARY_MARKER}\nSummarize this session in one line.` } }),
+  asst('claude-haiku-4-20250101', now - 90000, 10, 5, 0, 0),
 ]);
 
 // ── Run ─────────────────────────────────────────────────────────────────────
@@ -200,6 +206,11 @@ check('sess4 surfaces the Claude-written summary record', () => {
 check('sess1 falls back to first user prompt as summary (no summary record)', () => {
   const s = r.sessions.find(x => x.id === 'sess1');
   assert.strictEqual(s.summary, 'hi');
+});
+
+check('tokenmeter summary-gen sessions are excluded from the meter', () => {
+  assert.strictEqual(r.sessions.find(x => x.id === 'meta'), undefined, 'marker session leaked in');
+  assert.strictEqual(r.totalSessions, 4, 'marker session counted in totals');
 });
 
 check('workspaces map projects to ids, sessions carry workspace', () => {

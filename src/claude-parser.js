@@ -6,6 +6,10 @@ const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
 const LOOKBACK_DAYS = 90;
 const MAX_PREVIEW_LINES = 8;
 const WS_ICONS = ['◆', '◇', '◈', '⌂', '⚙', '▣', '◉', '✦', '❖', '⬡'];
+// Marker prefixing Tokenmeter's own `claude -p` summary prompts, so those
+// throwaway sessions are excluded from the meter (they'd otherwise show up as
+// tiny sessions and inflate totals).
+const SUMMARY_MARKER = '[[tokenmeter-summary]]';
 
 function decodeProjectName(folderName) {
   // Claude encodes a project's cwd as the folder name, replacing path separators
@@ -161,6 +165,13 @@ function parseClaudeJsonl(filePath) {
     if (!msg) continue;
 
     const ts = obj.timestamp ? new Date(obj.timestamp).getTime() : stat.mtimeMs;
+    // Skip our own summary-generation sessions entirely.
+    if (type === 'user') {
+      const c = msg.content;
+      const txt = typeof c === 'string' ? c
+        : (Array.isArray(c) ? (c.find(b => b && b.type === 'text')?.text || '') : '');
+      if (typeof txt === 'string' && txt.startsWith(SUMMARY_MARKER)) return null;
+    }
     records.push({
       type,
       ts,
@@ -275,10 +286,13 @@ function buildFileSessions(fileBase, projectName, parsed) {
 
   const root = makeSession(fileBase, projectName, parsed.mtime, main, ['main'], null);
   // Prefer Claude's own summary (last one wins — most recent title) over the
-  // first-prompt fallback already set by makeSession.
+  // first-prompt fallback already set by makeSession. `summarySource` tells the
+  // renderer whether this is a real summary or a placeholder it should upgrade
+  // via `claude -p`.
+  root.summarySource = 'prompt';
   if (parsed.summaries && parsed.summaries.length) {
     const last = parsed.summaries[parsed.summaries.length - 1].summary;
-    if (last) root.summary = clamp(last, 160);
+    if (last) { root.summary = clamp(last, 160); root.summarySource = 'claude'; }
   }
   const groups = groupSidechains(side);
   const childSessions = groups
@@ -483,4 +497,4 @@ function buildSparkline(projDailyTokens, days) {
   return result;
 }
 
-module.exports = { aggregateClaude };
+module.exports = { aggregateClaude, SUMMARY_MARKER };

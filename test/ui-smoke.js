@@ -26,6 +26,7 @@ ipcMain.handle('get-settings', () => settings);
 for (const c of ['save-settings', 'window-minimize', 'window-maximize', 'window-close', 'open-external', 'show-notification']) {
   ipcMain.handle(c, () => true);
 }
+ipcMain.handle('summarize-session', () => ({ available: false })); // no claude CLI in CI
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;

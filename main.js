@@ -1,7 +1,10 @@
 const { app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, Notification } = require('electron');
 const path = require('path');
+const os = require('os');
+const { execFile, spawn } = require('child_process');
 const Store = require('electron-store');
 const { scan } = require('./src/scanner');
+const { SUMMARY_MARKER } = require('./src/claude-parser');
 
 const store = new Store({ name: 'tokenmeter-config' });
 
@@ -18,8 +21,9 @@ const DEFAULT_SETTINGS = {
   idleTimeout: 60,
   openAtLogin: false,
   dailyCostAlert: 0,
-  sessionTheme: 'nord',     // Hyprland theme for the Sessions overview surface
+  sessionTheme: 'nord',      // Hyprland theme for the Sessions overview surface
   sessionsShowClosed: false, // Sessions view: show ended sessions too (default: live only)
+  sessionSummaries: true,    // Generate closed-session summaries via the local `claude -p` CLI
 };
 
 function fmtTokensTray(n) {
@@ -134,6 +138,73 @@ ipcMain.handle('open-external', (_e, url) => shell.openExternal(url));
 ipcMain.handle('show-notification', (_e, { title, body }) => {
   if (Notification.isSupported()) {
     new Notification({ title, body }).show();
+  }
+});
+
+// ── Closed-session summaries via the local Claude Code CLI (`claude -p`) ───────
+// Uses the user's already-authenticated Claude Code install — no API key, no
+// network config. Results are cached per session file (id:mtime) forever, and
+// the prompts are marked so the parser excludes these throwaway runs.
+let claudeCliState; // undefined = unchecked, true/false once probed
+
+function ensureClaudeCli() {
+  if (claudeCliState !== undefined) return Promise.resolve(claudeCliState);
+  return new Promise(resolve => {
+    execFile('claude', ['--version'], { shell: true, timeout: 8000 }, err => {
+      claudeCliState = !err;
+      resolve(claudeCliState);
+    });
+  });
+}
+
+function runClaudeSummary(digest) {
+  // Static argv (no user content) + prompt via stdin — safe even with shell:true
+  // (needed on Windows where `claude` is a .cmd shim).
+  const prompt =
+    `${SUMMARY_MARKER}\n` +
+    `Summarize this Claude Code session in ONE short line (max 12 words), ` +
+    `describing what was worked on. Output only the summary — no quotes, no preamble.\n\n` +
+    `Task: ${digest.firstPrompt || '(unknown)'}\n` +
+    `Activity:\n${(digest.lines || []).slice(0, 8).join('\n')}`;
+  return new Promise((resolve, reject) => {
+    let out = '', errOut = '';
+    const child = spawn('claude', ['-p', '--model', 'haiku'], { shell: true, cwd: os.tmpdir() });
+    const timer = setTimeout(() => { child.kill(); reject(new Error('timeout')); }, 30000);
+    child.stdout.on('data', d => { out += d; if (out.length > (1 << 20)) child.kill(); });
+    child.stderr.on('data', d => { errOut += d; });
+    child.on('error', e => { clearTimeout(timer); reject(e); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code !== 0 && !out) return reject(new Error(errOut.trim() || ('exit ' + code)));
+      let s = out.split('\n').map(x => x.trim()).filter(Boolean)[0] || '';
+      s = s.replace(/^["'`]+|["'`]+$/g, '').trim();
+      if (s.length > 140) s = s.slice(0, 139) + '…';
+      resolve(s);
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
+}
+
+ipcMain.handle('summarize-session', async (_e, digest) => {
+  if (!digest || !digest.id) return { available: false };
+  if (getSettings().sessionSummaries === false) return { available: false };
+
+  const key = `${digest.id}:${digest.mtime}`;
+  const cache = store.get('summaryCache', {});
+  if (cache[key]) return { summary: cache[key], cached: true };
+
+  if (!(await ensureClaudeCli())) return { available: false };
+  try {
+    const summary = await runClaudeSummary(digest);
+    if (summary) {
+      cache[key] = summary;
+      store.set('summaryCache', cache);
+      return { summary };
+    }
+    return { summary: null };
+  } catch (e) {
+    return { error: String(e && e.message || e), available: claudeCliState };
   }
 });
 

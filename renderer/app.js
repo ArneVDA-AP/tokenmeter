@@ -517,6 +517,53 @@ function hyprEligible(s) {
 }
 const noTilde = (n) => fmtCost(n).replace('~', '');
 
+// ── Closed-session summaries via the local `claude -p` CLI (main process) ─────
+// Throttled, cached client-side (key id:mtime) so they don't re-flash or
+// re-request across refreshes. Only closed cards get upgraded; real Claude
+// summary records (summarySource==='claude') are shown as-is.
+const hyprSummaryCache = {};
+const hyprSummaryInflight = new Set();
+let hyprSummariesAvailable = true;
+let hyprSummaryQueue = [];
+let hyprSummaryActive = 0;
+const HYPR_SUMMARY_CONCURRENCY = 3;
+
+function hyprDisplaySummary(s) {
+  if (s.summarySource === 'claude') return s.summary;
+  return hyprSummaryCache[`${s.id}:${s.mtime}`] || s.summary;
+}
+function hyprQueueSummaries(roots) {
+  if (!hyprSummariesAvailable) return;
+  if (currentSettings && currentSettings.sessionSummaries === false) return;
+  for (const s of roots) {
+    if (hyprIsActive(s) || s.summarySource === 'claude') continue;
+    const key = `${s.id}:${s.mtime}`;
+    if (hyprSummaryCache[key] || hyprSummaryInflight.has(key)) continue;
+    hyprSummaryQueue.push(s);
+  }
+  hyprPumpSummaries();
+}
+function hyprPumpSummaries() {
+  while (hyprSummaryActive < HYPR_SUMMARY_CONCURRENCY && hyprSummaryQueue.length) {
+    const s = hyprSummaryQueue.shift();
+    const key = `${s.id}:${s.mtime}`;
+    if (hyprSummaryCache[key] || hyprSummaryInflight.has(key)) continue;
+    hyprSummaryInflight.add(key);
+    hyprSummaryActive++;
+    tm.summarizeSession({ id: s.id, mtime: s.mtime, firstPrompt: s.summary, lines: (s.preview || []).map(l => l.text) })
+      .then(res => {
+        if (res && res.available === false) { hyprSummariesAvailable = false; hyprSummaryQueue = []; return; }
+        if (res && res.summary) { hyprSummaryCache[key] = res.summary; hyprUpdateSummaryDOM(s.id, res.summary); }
+      })
+      .catch(() => {})
+      .finally(() => { hyprSummaryInflight.delete(key); hyprSummaryActive--; hyprPumpSummaries(); });
+  }
+}
+function hyprUpdateSummaryDOM(id, text) {
+  const el = document.querySelector(`#hypr-root .hypr-win[data-sid="${CSS.escape(id)}"] .hypr-summary`);
+  if (el) { el.textContent = text; el.title = text; }
+}
+
 function renderSessions(data) {
   const cl = data?.claude;
   const rootEl = document.getElementById('hypr-root');
@@ -541,6 +588,8 @@ function renderSessions(data) {
     if (s) hyprOpenDetail(s, workspaces);
     else hyprDetailId = null;
   }
+
+  hyprQueueSummaries(visibleRoots); // upgrade closed-card summaries via claude -p
 }
 
 function hyprWaybar(workspaces, roots, cl, activeCount) {
@@ -633,7 +682,7 @@ function hyprWin(s, isChild) {
           <div class="hypr-wago">${hyprAgo(s.endTime || s.mtime)}${active ? '<span class="hypr-pulse"></span>' : ''}</div>
         </div>
         <div class="hypr-term">
-          ${!active && s.summary ? `<div class="hypr-summary" title="${escHtml(s.summary)}">${escHtml(s.summary)}</div>` : ''}
+          ${!active && hyprDisplaySummary(s) ? `<div class="hypr-summary" title="${escHtml(hyprDisplaySummary(s))}">${escHtml(hyprDisplaySummary(s))}</div>` : ''}
           ${lines}
           ${active ? '<div><span class="hypr-cursor"></span></div>' : ''}
           <div class="fade"></div>
@@ -679,6 +728,7 @@ function hyprDetailHTML(s, workspaces) {
   }
 
   const out = (s.preview || []).map(l => `<div class="ln l-${l.type}">${escHtml(l.text)}</div>`).join('');
+  const summaryText = hyprDisplaySummary(s);
   return `
     <div class="hypr-detail-head"><div class="hypr-detail-head-in">
       <div>
@@ -689,7 +739,7 @@ function hyprDetailHTML(s, workspaces) {
     </div></div>
     <div class="hypr-detail-body">
       <div class="hypr-stats">${statCards}</div>
-      ${s.summary ? `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SUMMARY</div><div class="hypr-doutput"><div class="ln" style="white-space:normal">${escHtml(s.summary)}</div></div></div>` : ''}
+      ${summaryText ? `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SUMMARY</div><div class="hypr-doutput"><div class="ln" style="white-space:normal">${escHtml(summaryText)}</div></div></div>` : ''}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">MODELS</div>${modelRows}</div>
       ${rel}
       <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SESSION OUTPUT</div><div class="hypr-doutput">${out}</div></div>
@@ -936,6 +986,7 @@ async function openSettings() {
   document.getElementById('s-gemini-path').value  = settings.geminiPath || '';
   document.getElementById('s-idle-timeout').value = settings.idleTimeout || 60;
   document.getElementById('s-cost-alert').value   = settings.dailyCostAlert || 0;
+  document.getElementById('s-session-summaries').value = settings.sessionSummaries === false ? '0' : '1';
   document.getElementById('settings-overlay').classList.add('visible');
 }
 
@@ -951,9 +1002,11 @@ async function saveSettings() {
     geminiPath:      document.getElementById('s-gemini-path').value.trim(),
     idleTimeout:     parseInt(document.getElementById('s-idle-timeout').value),
     dailyCostAlert:  parseFloat(document.getElementById('s-cost-alert').value) || 0,
+    sessionSummaries: document.getElementById('s-session-summaries').value === '1',
   };
   await tm.saveSettings(settings);
-  currentSettings = settings;
+  currentSettings = { ...currentSettings, ...settings };
+  if (settings.sessionSummaries) hyprSummariesAvailable = true; // re-probe if re-enabled
   idleTimeout = (settings.idleTimeout || 60) * 1000;
   resetIdleTimer();
   closeSettings();

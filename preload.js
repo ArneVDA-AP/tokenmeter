@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('tokenmeter', {
   getUsageData: () => ipcRenderer.invoke('get-usage-data'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
+  summarizeSession: (digest) => ipcRenderer.invoke('summarize-session', digest),
   windowMinimize: () => ipcRenderer.invoke('window-minimize'),
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose: () => ipcRenderer.invoke('window-close'),

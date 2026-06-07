@@ -4,6 +4,8 @@ const { calcClaudeCost, calcCacheSavings } = require('./pricer');
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
 const LOOKBACK_DAYS = 90;
+const MAX_PREVIEW_LINES = 8;
+const WS_ICONS = ['◆', '◇', '◈', '⌂', '⚙', '▣', '◉', '✦', '❖', '⬡'];
 
 function decodeProjectName(folderName) {
   // Claude encodes a project's cwd as the folder name, replacing path separators
@@ -25,12 +27,86 @@ function decodeProjectName(folderName) {
   return folderName;
 }
 
-// Fraction of prompt (non-output) tokens served from cache, as a percentage.
-// cacheWriteTokens is deliberately excluded: cache creation is first-time
-// ingestion, not a hit/miss of an existing entry. Guards divide-by-zero.
-function cacheHitPct(cacheRead, input) {
-  const denom = cacheRead + input;
+// Cache hit %: reads / (reads + writes + input). Cache *writes* are first-time
+// cache misses (the context being ingested and stored) and plain input is
+// uncached, so both belong in the denominator. Counting only reads+input pins
+// the metric at ~100% in real logs, because once a session's context is cached
+// Claude reports a near-zero input_tokens per turn. Guards divide-by-zero.
+function cacheHitPct(cacheRead, input, cacheWrite) {
+  const denom = cacheRead + input + (cacheWrite || 0);
   return denom > 0 ? (cacheRead / denom) * 100 : 0;
+}
+
+// ── Preview helpers (turn raw JSONL content into terminal-style lines) ────────
+function firstLine(s) {
+  if (!s || typeof s !== 'string') return '';
+  const t = s.replace(/\s+/g, ' ').trim();
+  if (!t || t.startsWith('<')) return ''; // skip system-reminder / command meta
+  return t.length > 72 ? t.slice(0, 71) + '…' : t;
+}
+
+function toolResultText(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.filter(b => b && b.type === 'text').map(b => b.text).join(' ');
+  }
+  return '';
+}
+
+function toolLine(block) {
+  const name = block.name || 'tool';
+  const a = block.input || {};
+  const arg = a.file_path || a.path || a.command || a.pattern || a.query ||
+              a.url || a.description || '';
+  const shortArg = firstLine(typeof arg === 'string' ? arg : '');
+  return `⚡ ${name}${shortArg ? ' ' + shortArg : ''}`;
+}
+
+function fmtTok(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
+}
+
+// Build up to MAX_PREVIEW_LINES terminal-style lines from a record list,
+// keeping the most recent activity and ending with a synthesized cost summary.
+function buildPreview(recs, sum) {
+  const lines = [];
+  for (const r of recs) {
+    const c = r.content;
+    if (r.type === 'user') {
+      if (typeof c === 'string') {
+        const t = firstLine(c);
+        if (t) lines.push({ type: 'prompt', text: '> ' + t });
+      } else if (Array.isArray(c)) {
+        for (const b of c) {
+          if (!b) continue;
+          if (b.type === 'text' && b.text) {
+            const t = firstLine(b.text);
+            if (t) lines.push({ type: 'prompt', text: '> ' + t });
+          } else if (b.type === 'tool_result') {
+            const t = firstLine(toolResultText(b.content));
+            if (t) lines.push({ type: b.is_error ? 'error' : 'ok', text: (b.is_error ? '✗ ' : '✓ ') + t });
+          }
+        }
+      }
+    } else if (r.type === 'assistant' && Array.isArray(c)) {
+      for (const b of c) {
+        if (!b) continue;
+        if (b.type === 'text' && b.text) {
+          const t = firstLine(b.text);
+          if (t) lines.push({ type: 'output', text: t });
+        } else if (b.type === 'tool_use') {
+          lines.push({ type: b.name === 'Task' ? 'agent' : 'tool', text: toolLine(b) });
+        }
+      }
+    }
+  }
+  const kept = lines.slice(-(MAX_PREVIEW_LINES - 1));
+  kept.push({
+    type: 'cost',
+    text: `↳ ${fmtTok(sum.input + sum.output)} tok · $${sum.cost.toFixed(2)} · cache ${Math.round(cacheHitPct(sum.cacheRead, sum.input, sum.cacheWrite))}%`,
+  });
+  return kept;
 }
 
 function parseClaudeJsonl(filePath) {
@@ -49,26 +125,134 @@ function parseClaudeJsonl(filePath) {
     if (!trimmed) continue;
     let obj;
     try { obj = JSON.parse(trimmed); } catch { continue; }
+    if (!obj || typeof obj !== 'object') continue;
 
-    if (obj.type !== 'assistant') continue;
+    const type = obj.type;
+    if (type !== 'assistant' && type !== 'user') continue;
     const msg = obj.message;
-    if (!msg || !msg.usage) continue;
+    if (!msg) continue;
 
-    const usage = msg.usage;
-    const model = msg.model || 'unknown';
     const ts = obj.timestamp ? new Date(obj.timestamp).getTime() : stat.mtimeMs;
-
     records.push({
-      model,
+      type,
       ts,
-      inputTokens: usage.input_tokens || 0,
-      outputTokens: usage.output_tokens || 0,
-      cacheReadTokens: usage.cache_read_input_tokens || 0,
-      cacheWriteTokens: usage.cache_creation_input_tokens || 0,
+      uuid: obj.uuid || null,
+      parentUuid: obj.parentUuid || null,
+      isSidechain: !!obj.isSidechain,
+      model: msg.model || null,
+      usage: (type === 'assistant' && msg.usage) ? msg.usage : null,
+      content: msg.content,
     });
   }
 
   return { records, mtime: stat.mtimeMs };
+}
+
+// Reduce a list of records to token/cost/model/duration totals.
+function summarize(recs) {
+  let input = 0, output = 0, cacheRead = 0, cacheWrite = 0;
+  let start = Infinity, end = 0, assistantCount = 0, lastModel = 'unknown';
+  const modelMap = new Map();
+  for (const r of recs) {
+    if (!r.usage) continue;
+    // Duration spans usage (assistant) records only; these always carry a real
+    // timestamp, unlike some noise records that fall back to the file mtime.
+    if (r.ts < start) start = r.ts;
+    if (r.ts > end) end = r.ts;
+    assistantCount++;
+    const u = r.usage;
+    const i = u.input_tokens || 0, o = u.output_tokens || 0;
+    const cr = u.cache_read_input_tokens || 0, cw = u.cache_creation_input_tokens || 0;
+    input += i; output += o; cacheRead += cr; cacheWrite += cw;
+    const model = r.model || 'unknown';
+    lastModel = model;
+    if (!modelMap.has(model)) {
+      modelMap.set(model, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUSD: 0 });
+    }
+    const m = modelMap.get(model);
+    m.inputTokens += i; m.outputTokens += o;
+    m.cacheReadTokens += cr; m.cacheWriteTokens += cw;
+    m.estimatedCostUSD += calcClaudeCost(model, i, o, cr, cw);
+  }
+  let cost = 0;
+  for (const m of modelMap.values()) cost += m.estimatedCostUSD;
+  return { input, output, cacheRead, cacheWrite, start, end, assistantCount, lastModel, modelMap, cost };
+}
+
+function makeSession(id, project, mtime, recs, agents, parent) {
+  const sum = summarize(recs);
+  return {
+    id, project, mtime,
+    startTime: sum.start === Infinity ? mtime : sum.start,
+    endTime: sum.end || mtime,
+    durationMs: (sum.start !== Infinity && sum.end > sum.start) ? (sum.end - sum.start) : 0,
+    recordCount: sum.assistantCount,
+    inputTokens: sum.input,
+    outputTokens: sum.output,
+    cacheReadTokens: sum.cacheRead,
+    cacheWriteTokens: sum.cacheWrite,
+    totalTokens: sum.input + sum.output,
+    estimatedCostUSD: sum.cost,
+    cacheHitPct: cacheHitPct(sum.cacheRead, sum.input, sum.cacheWrite),
+    model: sum.lastModel,
+    models: Object.fromEntries(sum.modelMap),
+    agents,
+    parent,
+    preview: buildPreview(recs, sum),
+  };
+}
+
+// Group sidechain (sub-agent / Task) records into connected runs. Each run is a
+// distinct spawned agent; the run's root is the topmost sidechain record whose
+// parent is NOT itself a sidechain (i.e. it descends from the main chain).
+function groupSidechains(sideRecs) {
+  const byUuid = new Map();
+  for (const r of sideRecs) if (r.uuid) byUuid.set(r.uuid, r);
+  const rootFor = (r) => {
+    let cur = r;
+    const seen = new Set();
+    while (cur && cur.parentUuid && byUuid.has(cur.parentUuid) && !seen.has(cur.uuid)) {
+      seen.add(cur.uuid);
+      cur = byUuid.get(cur.parentUuid);
+    }
+    return cur.uuid || `t${cur.ts}`;
+  };
+  const groups = new Map();
+  for (const r of sideRecs) {
+    const root = rootFor(r);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(r);
+  }
+  return [...groups.values()];
+}
+
+// Build a root session (main chain) plus one child session per spawned agent.
+function buildFileSessions(fileBase, projectName, parsed) {
+  const main = parsed.records.filter(r => !r.isSidechain);
+  const side = parsed.records.filter(r => r.isSidechain);
+
+  // Names for spawned agents, harvested from Task tool_use blocks in the main chain.
+  const taskNames = [];
+  for (const r of main) {
+    if (r.type === 'assistant' && Array.isArray(r.content)) {
+      for (const b of r.content) {
+        if (b && b.type === 'tool_use' && b.name === 'Task') {
+          const inp = b.input || {};
+          taskNames.push(inp.subagent_type || inp.description || 'agent');
+        }
+      }
+    }
+  }
+
+  const root = makeSession(fileBase, projectName, parsed.mtime, main, ['main'], null);
+  const groups = groupSidechains(side);
+  const childSessions = groups
+    .map((g, idx) => makeSession(`${fileBase}~a${idx + 1}`, projectName, parsed.mtime, g, [taskNames[idx] || 'agent'], fileBase))
+    .filter(c => c.recordCount > 0);
+
+  root.children = childSessions.map(c => c.id);
+  root.childSessions = childSessions;
+  return root;
 }
 
 function aggregateClaude(claudeDir) {
@@ -107,110 +291,59 @@ function aggregateClaude(claudeDir) {
 
       projSessions++;
       totalSessions++;
-
       const sessionId = path.basename(filePath, '.jsonl');
-      let sessionInput = 0, sessionOutput = 0, sessionCacheRead = 0, sessionCacheWrite = 0;
-      let lastModel = 'unknown';
-      let sessionStart = Infinity, sessionEnd = 0, recordCount = 0;
-      // model → { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, estimatedCostUSD }
-      const sessionModelMap = new Map();
 
+      // Global/daily/hourly/model aggregations over every usage record in the file.
       for (const rec of parsed.records) {
-        sessionInput += rec.inputTokens;
-        sessionOutput += rec.outputTokens;
-        sessionCacheRead += rec.cacheReadTokens;
-        sessionCacheWrite += rec.cacheWriteTokens;
-        lastModel = rec.model;
-        recordCount++;
-        if (rec.ts < sessionStart) sessionStart = rec.ts;
-        if (rec.ts > sessionEnd) sessionEnd = rec.ts;
+        if (!rec.usage) continue;
+        const u = rec.usage;
+        const i = u.input_tokens || 0, o = u.output_tokens || 0;
+        const cr = u.cache_read_input_tokens || 0, cw = u.cache_creation_input_tokens || 0;
+        const recTokens = i + o;
+        const recCost = calcClaudeCost(rec.model, i, o, cr, cw);
 
-        const recTokens = rec.inputTokens + rec.outputTokens;
-        const recCost = calcClaudeCost(rec.model, rec.inputTokens, rec.outputTokens, rec.cacheReadTokens, rec.cacheWriteTokens);
+        projInput += i; projOutput += o; projCacheRead += cr; projCacheWrite += cw;
+        projCost += recCost;
 
-        // hourly bucketing
         hourlyMap[new Date(rec.ts).getHours()] += recTokens;
 
-        // daily bucketing (local time)
         const dateKey = new Date(rec.ts).toLocaleDateString('en-CA'); // YYYY-MM-DD
         if (!dailyMap.has(dateKey)) {
-          dailyMap.set(dateKey, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUSD: 0, cacheReadTokens: 0 });
+          dailyMap.set(dateKey, { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUSD: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
         }
         const day = dailyMap.get(dateKey);
-        day.inputTokens += rec.inputTokens;
-        day.outputTokens += rec.outputTokens;
+        day.inputTokens += i;
+        day.outputTokens += o;
         day.totalTokens += recTokens;
         day.estimatedCostUSD += recCost;
-        day.cacheReadTokens += rec.cacheReadTokens;
+        day.cacheReadTokens += cr;
+        day.cacheWriteTokens += cw;
 
-        // per-project daily for sparklines
         if (!projectDailyMap.has(projectName)) projectDailyMap.set(projectName, new Map());
         const pdm = projectDailyMap.get(projectName);
         pdm.set(dateKey, (pdm.get(dateKey) || 0) + recTokens);
 
-        // accurate per-record cache savings
-        totalCacheSavings += calcCacheSavings(rec.model, rec.cacheReadTokens);
+        totalCacheSavings += calcCacheSavings(rec.model, cr);
 
-        // model breakdown (global)
         if (!modelMap.has(rec.model)) {
           modelMap.set(rec.model, { inputTokens: 0, outputTokens: 0, estimatedCostUSD: 0 });
         }
         const m = modelMap.get(rec.model);
-        m.inputTokens += rec.inputTokens;
-        m.outputTokens += rec.outputTokens;
-        m.estimatedCostUSD += recCost;
-
-        // model breakdown (within this session)
-        if (!sessionModelMap.has(rec.model)) {
-          sessionModelMap.set(rec.model, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, estimatedCostUSD: 0 });
-        }
-        const sm = sessionModelMap.get(rec.model);
-        sm.inputTokens += rec.inputTokens;
-        sm.outputTokens += rec.outputTokens;
-        sm.cacheReadTokens += rec.cacheReadTokens;
-        sm.cacheWriteTokens += rec.cacheWriteTokens;
-        sm.estimatedCostUSD += recCost;
+        m.inputTokens += i; m.outputTokens += o; m.estimatedCostUSD += recCost;
       }
 
-      // Session cost = sum of per-model record costs (accurate even when a
-      // session switches models mid-stream, unlike a single whole-session calc).
-      let sessionCost = 0;
-      for (const sm of sessionModelMap.values()) sessionCost += sm.estimatedCostUSD;
-
-      projInput += sessionInput;
-      projOutput += sessionOutput;
-      projCacheRead += sessionCacheRead;
-      projCacheWrite += sessionCacheWrite;
-      projCost += sessionCost;
-
-      allSessions.push({
-        id: sessionId,
-        project: projectName,
-        mtime: parsed.mtime,
-        startTime: sessionStart === Infinity ? parsed.mtime : sessionStart,
-        endTime: parsed.mtime,
-        durationMs: (sessionStart !== Infinity && sessionEnd > sessionStart) ? (sessionEnd - sessionStart) : 0,
-        recordCount,
-        inputTokens: sessionInput,
-        outputTokens: sessionOutput,
-        cacheReadTokens: sessionCacheRead,
-        cacheWriteTokens: sessionCacheWrite,
-        totalTokens: sessionInput + sessionOutput,
-        estimatedCostUSD: sessionCost,
-        cacheHitPct: cacheHitPct(sessionCacheRead, sessionInput),
-        model: lastModel,
-        models: Object.fromEntries(sessionModelMap),
-      });
+      allSessions.push(buildFileSessions(sessionId, projectName, parsed));
     }
 
     if (projInput + projOutput > 0) {
       if (!projectMap.has(projectName)) {
-        projectMap.set(projectName, { name: projectName, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, totalTokens: 0, estimatedCostUSD: 0, sessionCount: 0 });
+        projectMap.set(projectName, { name: projectName, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0, estimatedCostUSD: 0, sessionCount: 0 });
       }
       const p = projectMap.get(projectName);
       p.inputTokens += projInput;
       p.outputTokens += projOutput;
       p.cacheReadTokens += projCacheRead;
+      p.cacheWriteTokens += projCacheWrite;
       p.totalTokens += projInput + projOutput;
       p.estimatedCostUSD += projCost;
       p.sessionCount += projSessions;
@@ -237,9 +370,21 @@ function aggregateClaude(claudeDir) {
     .sort((a, b) => b.totalTokens - a.totalTokens)
     .map(proj => ({
       ...proj,
-      cacheHitPct: cacheHitPct(proj.cacheReadTokens, proj.inputTokens),
+      cacheHitPct: cacheHitPct(proj.cacheReadTokens, proj.inputTokens, proj.cacheWriteTokens),
       sparkline: buildSparkline(projectDailyMap.get(proj.name) || new Map(), 14),
     }));
+
+  // Workspaces = projects (Hyprland-style), id'd by token rank, with an icon.
+  const workspaces = projectBreakdown.map((p, idx) => ({
+    id: idx + 1,
+    name: p.name,
+    icon: WS_ICONS[idx % WS_ICONS.length],
+  }));
+  const wsIdByName = new Map(workspaces.map(w => [w.name, w.id]));
+  for (const s of allSessions) {
+    s.workspace = wsIdByName.get(s.project) || 0;
+    for (const c of (s.childSessions || [])) c.workspace = s.workspace;
+  }
 
   // Full session list (recency-sorted) for the Sessions tab; top 10 for the Claude page.
   const allSessionsByRecency = allSessions.slice().sort((a, b) => b.mtime - a.mtime);
@@ -263,9 +408,10 @@ function aggregateClaude(claudeDir) {
     totalTokens: totalInput + totalOutput,
     estimatedCostUSD: totalCost,
     totalSessions,
-    globalCacheHitPct: cacheHitPct(totalCacheRead, totalInput),
+    globalCacheHitPct: cacheHitPct(totalCacheRead, totalInput, totalCacheWrite),
     modelBreakdown,
     projectBreakdown,
+    workspaces,
     daily,
     heatmap,
     hourly: hourlyMap,
@@ -285,7 +431,7 @@ function buildDailyArray(dailyMap, days) {
     d.setDate(d.getDate() - i);
     const dateKey = d.toLocaleDateString('en-CA');
     const label = `${d.getMonth() + 1}/${d.getDate()}`;
-    const data = dailyMap.get(dateKey) || { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUSD: 0, cacheReadTokens: 0 };
+    const data = dailyMap.get(dateKey) || { inputTokens: 0, outputTokens: 0, totalTokens: 0, estimatedCostUSD: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
     result.push({ date: dateKey, label, ...data });
   }
   return result;

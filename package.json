@@ -11,7 +11,7 @@
     "prebuild": "node scripts/gen-icon.js",
     "build": "electron-builder --win",
     "build:portable": "electron-builder --win portable",
-    "test": "node test/parser.test.js && node test/webusage.test.js && node test/integration-transform.test.js",
+    "test": "node test/parser.test.js && node test/live-sessions.test.js && node test/webusage.test.js && node test/integration-transform.test.js",
     "test:ui": "electron --no-sandbox test/ui-smoke.js",
     "screenshots": "electron --no-sandbox test/ui-screenshot.js"
   },

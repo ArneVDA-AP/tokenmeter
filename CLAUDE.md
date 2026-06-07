@@ -10,11 +10,12 @@ Tokenmeter is a Windows Electron desktop app that reads local Claude Code JSONL 
 | `main.js` | Electron main: file I/O, IPC handlers, auto-refresh timer, system tray, native notifications |
 | `preload.js` | contextBridge — exposes safe `window.tokenmeter` API to renderer |
 | `renderer/index.html` | App shell: title bar, overview page, Claude detail page, bottom nav, settings modal, toast |
-| `renderer/styles.css` | All styles — pure neutral dark grays, no blue tints, orange (#e8650a) accent |
-| `renderer/app.js` | UI logic: routing, chart rendering, heatmap, sparklines, cost alert, idle timer |
+| `renderer/styles.css` | All styles — neutral grays + orange (#e8650a). EXCEPTION: the Sessions surface (`.hypr-*`) is themed via scoped `--h-*` vars (Hyprland palettes, blue/purple allowed there only) |
+| `renderer/hypr-themes.js` | 5 Hyprland theme palettes (Nord/Everforest/Gruvbox/Macchiato/Rosé Pine) + `applyHyprTheme(el, key)` — sets `--h-*` vars on the Sessions surface |
+| `renderer/app.js` | UI logic: routing, charts, heatmap, sparklines, cost alert, idle timer, Hyprland session overview (waybar/strip/grid/detail/expo) |
 | `renderer/animations.js` | PixelEngine (inlined) + all 7 creature presets + cycling controller |
 | `src/scanner.js` | Orchestrates Claude + Gemini parsers, builds `combined` totals |
-| `src/claude-parser.js` | Parses `.jsonl` files, aggregates tokens/cost/daily/hourly/heatmap/sparklines |
+| `src/claude-parser.js` | Parses `.jsonl`; aggregates tokens/cost/daily/hourly/heatmap/sparklines; builds per-session terminal previews + sub-agent (sidechain) child sessions + workspaces |
 | `src/gemini-parser.js` | Parses Gemini session files (backend ready, UI hidden) |
 | `src/pricer.js` | Cost calculation via `pricing.json` pattern matching; `calcCacheSavings()` |
 | `pricing.json` | User-editable model pricing table |
@@ -28,7 +29,9 @@ Tokenmeter is a Windows Electron desktop app that reads local Claude Code JSONL 
 - Claude projects folder uses `--` as path separator in folder names
 - All cost estimates labelled as `~$` throughout the UI
 - `LOOKBACK_DAYS = 90` in parsers — skip files older than 90 days
-- Never use blue tints in UI — palette is pure neutral grays + orange only
+- No blue tints in UI — palette is neutral grays + orange. ONE EXCEPTION: the Sessions overview (`.hypr-root` and descendants) uses the Hyprland theme system via `--h-*` vars, which includes blue/purple themes. Keep that theming scoped to `.hypr-*`; never leak `--h-*` to the rest of the app.
+- Cache hit % = `read / (read + write + input)`. Cache *writes* (first-time misses) and plain input both belong in the denominator — omitting writes pins the metric at ~100% in real logs. See `cacheHitPct()` in `claude-parser.js`.
+- "Active" session = its last activity is within `HYPR_ACTIVE_MS` (10 min) — a proxy for a running Claude Code terminal (computed in `app.js` from `endTime`).
 
 ## Data Sources
 - Claude Code: `%USERPROFILE%\.claude\projects\**\*.jsonl`
@@ -44,6 +47,7 @@ claudePath       — override for Claude projects folder
 geminiPath       — override for Gemini sessions folder
 idleTimeout      — seconds before idle animation triggers (default 60)
 dailyCostAlert   — USD threshold for native cost alert (default 0 = off)
+sessionTheme     — Hyprland theme for the Sessions surface (default 'nord')
 ```
 
 ## Data Flow: claude-parser.js → scanner.js → IPC → renderer
@@ -56,13 +60,17 @@ dailyCostAlert   — USD threshold for native cost alert (default 0 = off)
 - `cacheSavingsUSD` — accurate per-record savings via `calcCacheSavings(model, cacheReadTokens)`
 - `costProjection30d` — 7-day rolling average × 30
 - `modelBreakdown` — map of model → { inputTokens, outputTokens, estimatedCostUSD }
-- `projectBreakdown[]` — sorted by tokens, each with `sparkline[14]` (14-day token array)
+- `projectBreakdown[]` — sorted by tokens, each with `sparkline[14]` + `cacheHitPct`
 - `recentSessions[10]` — latest sessions by mtime
+- `globalCacheHitPct` — `read/(read+write+input)` (see Key Rules)
+- `workspaces[]` — projects as Hyprland workspaces: `{ id, name, icon }` (id = token rank)
+- `sessions[]` — ROOT sessions (one per `.jsonl`), recency-sorted. Each carries the legacy token/cost fields PLUS: `workspace`, `agents[]`, `preview[]` (terminal lines `{type,text}`), `children[]` (ids), and `childSessions[]` (full sub-agent session objects parsed from in-file sidechains). Child sessions have `parent` set.
 
 ## Renderer: What renders where
 - **Overview page** (`page-overview`): 4 stat chips, Claude CLI row, 14-day daily chart
-- **Claude page** (`page-claude`): last active card, insight cards (cache savings + projection), usage stat grid, 14-day chart, 90-day heatmap, peak hours chart, model table, projects table with sparklines, recent sessions
-- **Bottom nav**: 2 tabs — Overview, Claude Code
+- **Claude page** (`page-claude`): last active card, insight cards (cache savings + projection), usage stat grid, 14-day chart, cache-hit trend (idle days = gaps, not 0%), 90-day heatmap, peak hours chart, model table, projects table with sparklines, recent sessions
+- **Sessions page** (`page-sessions` → `#hypr-root`): Hyprland compositor overview, built entirely by `renderSessions()`. Waybar (workspace pills + theme switcher + expo + stats + active count + clock), workspace strip (ALL + per-project), session grid grouped by workspace, each session a terminal-window card showing real preview lines; spawned sub-agents render as indented child windows with a dashed connector. Click a window → slide-in detail panel (`#hypr-detail`). Expo overview via the `▦ expo` button or backtick; Esc closes overlays. Theme via `#hypr-theme-sel` (persisted as `sessionTheme`).
+- **Bottom nav**: 4 tabs — Overview, Claude Code, Sessions, Web
 - **Creature**: fixed bottom-left, grounded; cycles IDLE_POOL + EXPRESSIVE_POOL; locks to THINK during refresh
 - **Toast**: `#toast` div, bottom-right, auto-dismisses after 3.5s
 - **Settings modal**: `#settings-overlay`, toggled via `.visible` class

@@ -64,60 +64,64 @@ app.whenReady().then(async () => {
   rec('cache trend chart canvas present',
     (await $(win, "!!document.getElementById('chart-cache-trend')")) === true);
 
-  // 3. Sessions tab
+  // 3. Sessions tab — Hyprland compositor overview
   await $(win, "navigate('sessions');1"); await wait(500);
-  const rowCount = await $(win, "document.querySelectorAll('#se-list .tmux-row').length");
-  rec('sessions list renders rows', rowCount > 0, `${rowCount} rows`);
-  rec('tmux status summary populated',
-    /sessions/.test(await $(win, "document.getElementById('se-status-summary').textContent")));
+  const winCount = await $(win, "document.querySelectorAll('#hypr-root .hypr-win').length");
+  rec('session windows render', winCount > 0, `${winCount} windows`);
+  rec('waybar present',
+    (await $(win, "!!document.querySelector('#hypr-root .hypr-bar')")) === true);
+  rec('sessions grouped into workspace sections',
+    (await $(win, "document.querySelectorAll('#hypr-root .hypr-section-head').length")) > 0);
+  rec('spawned sub-agent renders as a child window',
+    (await $(win, "document.querySelectorAll('#hypr-root .hypr-child').length")) > 0, '');
+  rec('an active (live) session is flagged',
+    (await $(win, "!!document.querySelector('#hypr-root .hypr-win.active')")) === true);
 
-  // 4. Row click opens detail pane
+  // 4. Click a window → detail panel slides in, fully populated (6 stat cards).
   const opened = await $(win, `(function(){
-    var r=document.querySelector('#se-list .tmux-row'); if(!r) return false;
-    r.click();
-    var ov=document.getElementById('session-detail-overlay');
-    return ov.classList.contains('visible')
-      && document.getElementById('sd-stats').children.length>0
-      && document.getElementById('sd-models').children.length>0;
+    var w=document.querySelector('#hypr-root .hypr-win'); if(!w) return false;
+    w.click();
+    var d=document.getElementById('hypr-detail');
+    return d.classList.contains('open')
+      && !!d.querySelector('.hypr-stats')
+      && d.querySelectorAll('.hypr-stat').length===6
+      && d.querySelectorAll('.hypr-doutput .ln').length>0;
   })()`);
-  rec('row click opens populated detail pane', opened === true);
+  rec('window click opens populated detail panel', opened === true);
+  const closed = await $(win, "document.getElementById('hypr-detail-x').click(); !document.getElementById('hypr-detail').classList.contains('open')");
+  rec('close button hides the detail panel', closed === true);
 
-  // 4b. Detail pane title reflects the clicked session, and close hides it.
-  rec('detail title shows project / id',
-    /\w+\s*\/\s*\w+/.test(await $(win, "document.getElementById('sd-title').textContent")));
-  const closed = await $(win, "closeSessionDetail(); !document.getElementById('session-detail-overlay').classList.contains('visible')");
-  rec('closeSessionDetail hides the overlay', closed === true);
-
-  // 4c. Sorting by tokens puts the highest-token session first.
-  const sortOk = await $(win, `(function(){
-    var sessions = usageData.claude.sessions || [];
-    var maxId = sessions.slice().sort((a,b)=>b.totalTokens-a.totalTokens)[0].id;
-    var sel=document.getElementById('se-sort'); sel.value='tokens'; sel.dispatchEvent(new Event('change'));
-    var first=document.querySelector('#se-list .tmux-row');
-    return first && first.dataset.sessionId === maxId;
+  // 4b. Theme switcher repaints the scoped palette.
+  const themed = await $(win, `(function(){
+    var sel=document.getElementById('hypr-theme-sel'); sel.value='gruvbox'; sel.dispatchEvent(new Event('change',{bubbles:true}));
+    return document.getElementById('hypr-root').dataset.hyprTheme==='gruvbox';
   })()`);
-  rec('sort by tokens orders highest first', sortOk === true);
-  await $(win, "document.getElementById('se-sort').value='recent'; document.getElementById('se-sort').dispatchEvent(new Event('change')); 1");
+  rec('theme switcher applies a theme', themed === true);
 
-  // 4d. Text filter narrows to matching projects.
-  const textOk = await $(win, `(function(){
-    var inp=document.getElementById('se-filter-text'); inp.value='burnlink'; inp.dispatchEvent(new Event('input'));
-    var names=[...document.querySelectorAll('#se-list .tmux-row .tmux-name')];
-    var ok = names.length>0 && names.every(n=>n.textContent.toLowerCase().includes('burnlink'));
-    inp.value=''; inp.dispatchEvent(new Event('input'));
-    return ok;
-  })()`);
-  rec('text filter narrows to matching project', textOk === true);
-
-  // 5. Filtering narrows the list
+  // 5. Workspace filter narrows the grid to a single project (section headers drop).
   const narrowed = await $(win, `(function(){
-    var sel=document.getElementById('se-project');
-    var opt=[...sel.options].find(o=>o.value==='Home'); if(!opt) return false;
-    sel.value='Home'; sel.dispatchEvent(new Event('change'));
-    var rows=[...document.querySelectorAll('#se-list .tmux-row .tmux-name')];
-    return rows.length>0 && rows.every(n=>n.textContent.trim()==='Home');
+    var btn=document.querySelector('#hypr-root .hypr-strip-btn[data-ws]:not([data-ws="all"])');
+    if(!btn) return false;
+    btn.click();
+    var wins=document.querySelectorAll('#hypr-root .hypr-win[data-sid]').length;
+    var noSections=document.querySelectorAll('#hypr-root .hypr-section-head').length===0;
+    return wins>0 && noSections;
   })()`);
-  rec('project filter narrows to selected project', narrowed === true);
+  rec('workspace filter narrows to one project', narrowed === true);
+
+  // 5b. Expo (workspace overview) opens and is enterable.
+  const expoOpen = await $(win, `(function(){
+    document.querySelector('#hypr-root [data-expo]').click();
+    return !!document.getElementById('hypr-expo')
+      && document.querySelectorAll('#hypr-expo .hypr-expo-tile').length>0;
+  })()`);
+  rec('expo opens with workspace tiles', expoOpen === true);
+  const expoEnter = await $(win, `(function(){
+    var tile=document.querySelector('#hypr-expo .hypr-expo-tile[data-ws]'); if(!tile) return false;
+    tile.click();
+    return !document.getElementById('hypr-expo');
+  })()`);
+  rec('expo tile click enters workspace + closes expo', expoEnter === true);
 
   // 6. Web tab renders limit gauges + conversations from the fixture snapshot
   await $(win, "navigate('web');1"); await wait(500);

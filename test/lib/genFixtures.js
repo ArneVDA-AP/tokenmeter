@@ -11,6 +11,7 @@ function gen(claudeProjectsDir, opts = {}) {
   const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
   const ri = (a, b) => Math.floor(a + rnd() * (b - a + 1));
 
+  const pick = (arr) => arr[ri(0, arr.length - 1)];
   const projects = [
     { folder: 'C--Users-arne-desktop-projects-tokenmeter', sessions: 28 },
     { folder: 'C--Users-arne-desktop-projects-burnlink',   sessions: 16 },
@@ -23,40 +24,98 @@ function gen(claudeProjectsDir, opts = {}) {
     'claude-sonnet-4-20250514',
     'claude-haiku-4-20250101',
   ];
-  const now = Date.now();
+  const now = opts.now || Date.now();
+
+  const prompts = ['refactor the session view', 'add cost tracking', 'fix navbar alignment',
+    'implement link preview cards', 'setup dotfiles sync', 'add rate limiting middleware',
+    'tidy up the parser', 'wire up the settings modal'];
+  const files = ['src/parser.js', 'renderer/app.js', 'src/scanner.js', 'renderer/styles.css', 'src/pricer.js', 'main.js'];
+  const cmds = ['npm test', 'npm run build', 'git status', 'node test/parser.test.js'];
+  const notes = ['Reading project files…', 'Analyzing the module…', 'Applying edits…', 'Checking the diff…', 'Wiring it together…'];
+  const subagents = ['verifier', 'general-purpose', 'Explore'];
+  const usage = () => ({
+    input_tokens: ri(200, 4000), output_tokens: ri(100, 2500),
+    cache_read_input_tokens: ri(0, 40000), cache_creation_input_tokens: ri(0, 3000),
+  });
+  const subUsage = () => ({
+    input_tokens: ri(100, 1500), output_tokens: ri(50, 900),
+    cache_read_input_tokens: ri(0, 15000), cache_creation_input_tokens: ri(0, 1200),
+  });
 
   for (const p of projects) {
     const dir = path.join(claudeProjectsDir, p.folder);
     fs.mkdirSync(dir, { recursive: true });
 
     for (let i = 0; i < p.sessions; i++) {
-      const daysAgo = ri(0, 18);
+      let uid = 0;
+      const nid = () => `u${i}_${uid++}`;
+      const active = p.folder.includes('tokenmeter') && i < 2; // 2 live sessions
+      const daysAgo = active ? 0 : ri(0, 18);
       const start = new Date(now - daysAgo * 86400000);
       start.setHours(ri(8, 23), ri(0, 59), 0, 0);
-
-      const recs = ri(2, 14);
-      const primary = models[ri(0, models.length - 1)];
-      const lines = [];
       let t = start.getTime();
+
+      const recs = ri(3, 12);
+      const primary = pick(models);
+      const spawn = active || rnd() < 0.25; // a quarter of sessions spawn a sub-agent
+      const spawnAt = spawn ? ri(1, recs - 1) : -1;
+      const objs = [];
+      let prev = null;
+
+      const pu = nid();
+      objs.push({ type: 'user', uuid: pu, parentUuid: prev, isSidechain: false, timestamp: new Date(t).toISOString(), message: { content: pick(prompts) } });
+      prev = pu;
 
       for (let r = 0; r < recs; r++) {
         t += ri(20, 240) * 1000;
-        const model = rnd() < 0.15 ? models[ri(0, models.length - 1)] : primary;
-        lines.push(JSON.stringify({
-          type: 'assistant',
-          timestamp: new Date(t).toISOString(),
-          message: { model, usage: {
-            input_tokens: ri(200, 4000),
-            output_tokens: ri(100, 2500),
-            cache_read_input_tokens: ri(0, 40000),
-            cache_creation_input_tokens: ri(0, 3000),
-          } },
-        }));
+        const model = rnd() < 0.15 ? pick(models) : primary;
+        let content;
+        if (r === spawnAt) {
+          content = [{ type: 'text', text: 'Spawning a sub-agent to verify.' },
+                     { type: 'tool_use', name: 'Task', input: { subagent_type: pick(subagents), description: 'verify the changes' } }];
+        } else if (rnd() < 0.55) {
+          content = [{ type: 'tool_use', name: pick(['Edit', 'Read', 'Write', 'Grep', 'Bash']),
+                       input: rnd() < 0.5 ? { file_path: pick(files) } : { command: pick(cmds) } }];
+        } else {
+          content = [{ type: 'text', text: pick(notes) }];
+        }
+        const au = nid();
+        objs.push({ type: 'assistant', uuid: au, parentUuid: prev, isSidechain: false, timestamp: new Date(t).toISOString(), message: { model, usage: usage(), content } });
+        prev = au;
+
+        if (content[0].type === 'tool_use' && content[0].name !== 'Task' && rnd() < 0.5) {
+          t += ri(2, 20) * 1000;
+          const tu = nid();
+          objs.push({ type: 'user', uuid: tu, parentUuid: prev, isSidechain: false, timestamp: new Date(t).toISOString(), message: { content: [{ type: 'tool_result', is_error: rnd() < 0.1, content: [{ type: 'text', text: rnd() < 0.5 ? 'Done' : '8 passing' }] }] } });
+          prev = tu;
+        }
+
+        if (r === spawnAt) {
+          // Sub-agent run: sidechain records descending from the Task turn.
+          let sprev = au;
+          const subTurns = ri(1, 3);
+          for (let k = 0; k < subTurns; k++) {
+            t += ri(20, 120) * 1000;
+            const su = nid();
+            objs.push({ type: 'user', uuid: su, parentUuid: sprev, isSidechain: true, timestamp: new Date(t).toISOString(), message: { content: k === 0 ? 'verify the changes' : [{ type: 'tool_result', content: [{ type: 'text', text: 'checked' }] }] } });
+            sprev = su;
+            t += ri(20, 120) * 1000;
+            const sa = nid();
+            objs.push({ type: 'assistant', uuid: sa, parentUuid: sprev, isSidechain: true, timestamp: new Date(t).toISOString(), message: { model: pick(models), usage: subUsage(), content: [k === subTurns - 1 ? { type: 'text', text: '✓ all good' } : { type: 'tool_use', name: 'Read', input: { file_path: pick(files) } }] } });
+            sprev = sa;
+          }
+        }
       }
-      lines.push(JSON.stringify({ type: 'user', message: { content: '…' } })); // noise
+
+      // Shift active sessions so their last activity lands a few minutes ago.
+      if (active) {
+        const offset = now - t - ri(1, 5) * 60000;
+        for (const o of objs) o.timestamp = new Date(new Date(o.timestamp).getTime() + offset).toISOString();
+        t += offset;
+      }
 
       const fp = path.join(dir, `sess-${i}-${Math.floor(rnd() * 1e6)}.jsonl`);
-      fs.writeFileSync(fp, lines.join('\n') + '\n');
+      fs.writeFileSync(fp, objs.map(o => JSON.stringify(o)).join('\n') + '\n');
       const end = new Date(t);          // mtime = session end → realistic recency
       fs.utimesSync(fp, end, end);
     }

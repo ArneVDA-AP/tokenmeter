@@ -74,17 +74,23 @@ app.whenReady().then(async () => {
   win.setContentSize(900, 760);
   await wait(400);
   await go('sessions'); await wait(500);
-  // Open the detail for the most recent session that used multiple models.
+  // Open the detail for a recent session that spawned a sub-agent (richest panel).
   const state = await win.webContents.executeJavaScript(`(function(){
     var ss = (usageData && usageData.claude && usageData.claude.sessions) || [];
-    var s = ss.find(function(x){ return Object.keys(x.models||{}).length > 1; }) || ss[0];
+    var s = ss.find(function(x){ return (x.childSessions||[]).length>0; })
+         || ss.find(function(x){ return Object.keys(x.models||{}).length>1; }) || ss[0];
     if (!s) return { ok:false, reason:'no sessions' };
-    try { renderSessionDetail(s); }
+    hyprDetailId = s.id; hyprFocused = s.id;
+    try { renderSessions(usageData); }
     catch (e) { return { ok:false, reason:String(e) }; }
-    return { ok: document.getElementById('session-detail-overlay').classList.contains('visible'), id: s.id };
+    return { ok: document.getElementById('hypr-detail').classList.contains('open'), id: s.id };
   })();`);
   console.log('detail state:', JSON.stringify(state));
   await wait(900); await shot(state && state.ok ? '4-session-detail' : '4-session-detail-FAIL');
+
+  // Expo (workspace overview) capture.
+  await win.webContents.executeJavaScript(`(function(){ hyprDetailId=null; hyprExpo=true; renderSessions(usageData); })();`);
+  await wait(700); await shot('3b-expo');
 
   fs.rmSync(fixHome, { recursive: true, force: true });
   app.quit();

@@ -461,63 +461,275 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 }
 .toast.visible { opacity: 1; }
 
-/* ── SESSIONS (tmux-style) ── */
-.tmux-status {
-  display: flex; align-items: center; gap: 8px;
-  background: var(--surface2); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 5px 8px; margin-bottom: 12px;
-  font-size: 11px; color: var(--text-muted);
+/* ── SESSIONS (Hyprland/Omarchy compositor overview) ──────────────────────────
+   Scoped theming: all colors come from --h-* custom properties set on
+   .hypr-root by renderer/hypr-themes.js. Defaults below are the Nord palette so
+   the surface renders before JS applies the saved theme. */
+.hypr-root {
+  --h-bg:#2e3440; --h-panel:rgba(46,52,64,0.88); --h-window:#2e3440;
+  --h-window-active:#3b4252; --h-titlebar:#3b4252;
+  --h-b1:#81a1c1; --h-b2:#88c0d0; --h-border:#434c5e;
+  --h-fg:#d8dee9; --h-fg-dim:#7b88a1; --h-fg-meta:#4c566a; --h-fg-bright:#eceff4;
+  --h-red:#bf616a; --h-green:#a3be8c; --h-yellow:#ebcb8b; --h-blue:#81a1c1;
+  --h-magenta:#b48ead; --h-cyan:#88c0d0; --h-accent:#81a1c1; --h-accent-alt:#88c0d0;
+  --h-sel:rgba(129,161,193,0.13); --h-shadow:rgba(0,0,0,0.30);
+
+  margin: -14px -16px; min-height: calc(100vh - 114px);
+  position: relative; color: var(--h-fg);
+  font-family: var(--font); font-size: 11px;
+  background:
+    radial-gradient(ellipse at 20% 50%, color-mix(in srgb, var(--h-b1) 6%, transparent), transparent 60%),
+    radial-gradient(ellipse at 80% 18%, color-mix(in srgb, var(--h-b2) 5%, transparent), transparent 50%),
+    var(--h-bg);
 }
-.tmux-status-tag {
-  background: var(--orange); color: #161616; font-weight: 700;
-  padding: 1px 6px; border-radius: 2px; letter-spacing: 0.04em;
+.hypr-root::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background-image: radial-gradient(color-mix(in srgb, var(--h-border) 32%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px; opacity: 0.4;
+}
+.hypr-root > * { position: relative; z-index: 1; }
+
+/* Waybar */
+.hypr-bar {
+  position: sticky; top: -14px; z-index: 20;
+  display: flex; align-items: center; gap: 2px;
+  height: 34px; padding: 0 10px;
+  background: var(--h-panel); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--h-border);
+}
+.hypr-ws {
+  padding: 3px 9px; border-radius: 4px; cursor: pointer;
+  color: var(--h-fg-dim); font-size: 11px; letter-spacing: 0.03em;
+  border: 1px solid transparent; transition: all 0.15s ease;
+  display: flex; align-items: center; gap: 4px;
+}
+.hypr-ws:hover { color: var(--h-fg); }
+.hypr-ws.active {
+  background: color-mix(in srgb, var(--h-accent) 13%, transparent);
+  color: var(--h-accent); font-weight: 700;
+  border-color: color-mix(in srgb, var(--h-accent) 30%, transparent);
+}
+.hypr-ws .ix { opacity: 0.65; }
+.hypr-bar-title { flex: 1; text-align: center; color: var(--h-fg-dim); font-size: 11px; }
+.hypr-bar-title b { color: var(--h-fg); font-weight: 600; }
+.hypr-bar-title .sep { color: var(--h-fg-meta); margin: 0 6px; }
+.hypr-bar-right { display: flex; align-items: center; gap: 6px; }
+.hypr-mod {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px; border-radius: 4px; font-size: 11px;
+  background: color-mix(in srgb, var(--h-window) 70%, transparent);
+  border: 1px solid transparent;
+}
+.hypr-mod.btn { cursor: pointer; color: var(--h-fg-dim); }
+.hypr-mod.btn:hover, .hypr-mod.btn.on {
+  color: var(--h-accent);
+  border-color: color-mix(in srgb, var(--h-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--h-accent) 13%, transparent);
+}
+.hypr-mod.active-mod { border-left: 2px solid var(--h-green); }
+.hypr-mod .tok { color: var(--h-accent); }
+.hypr-mod .cost { color: var(--h-yellow); }
+.hypr-mod .clk { color: var(--h-fg); font-weight: 600; }
+.hypr-theme-sel {
+  background: color-mix(in srgb, var(--h-window) 70%, transparent);
+  color: var(--h-fg-dim); border: 1px solid var(--h-border);
+  border-radius: 4px; font-family: var(--font); font-size: 10px;
+  padding: 3px 6px; cursor: pointer;
 }
 
-.session-controls { display: flex; gap: 8px; margin-bottom: 12px; }
-.session-controls .setting-input  { flex: 1; }
-.session-controls .setting-select { flex: 0 0 auto; width: auto; }
+/* Workspace strip */
+.hypr-strip { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 10px 0 4px; }
+.hypr-strip-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 10px;
+  color: var(--h-fg-dim); letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--h-window) 50%, transparent);
+  border: 1px solid var(--h-border); transition: all 0.15s ease;
+}
+.hypr-strip-btn .n { font-weight: 700; color: var(--h-fg); font-size: 11px; }
+.hypr-strip-btn .c { color: var(--h-fg-meta); }
+.hypr-strip-btn.active {
+  color: var(--h-accent);
+  background: color-mix(in srgb, var(--h-accent) 13%, transparent);
+  border-color: color-mix(in srgb, var(--h-accent) 40%, transparent);
+}
+.hypr-strip-btn.active .n { color: var(--h-accent); }
 
-.tmux-list { display: flex; flex-direction: column; gap: 2px; }
-.tmux-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; border: 1px solid transparent;
-  border-left: 2px solid transparent; border-radius: var(--radius);
-  background: var(--surface); cursor: pointer; transition: all 0.1s;
+/* Session grid */
+.hypr-grid-wrap { padding: 8px 28px 40px; display: flex; flex-direction: column; gap: 34px; }
+.hypr-section-head {
+  display: flex; align-items: center; gap: 8px; padding: 0 2px 8px;
 }
-.tmux-row:hover { border-color: var(--border-hi); border-left-color: var(--orange); background: var(--surface2); }
-.tmux-idx  { color: var(--text-dim); font-size: 11px; min-width: 24px; text-align: right; }
-.tmux-name { color: var(--orange); font-weight: 700; font-size: 12px; flex: 0 0 auto; max-width: 28%;
-             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tmux-meta { color: var(--text-dim); font-size: 10px; flex: 1;
-             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tmux-bar  { flex: 0 0 60px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.tmux-bar-fill { display: block; height: 100%; background: var(--orange); }
-.tmux-more, .tmux-empty { text-align: center; color: var(--text-dim); font-size: 10px; padding: 10px; }
+.hypr-section-head .ix { font-size: 11px; font-weight: 700; color: var(--h-accent); opacity: 0.7; }
+.hypr-section-head .nm { font-size: 11px; color: var(--h-fg-dim); letter-spacing: 0.05em; }
+.hypr-section-head .rule { flex: 1; height: 1px; background: linear-gradient(90deg, color-mix(in srgb, var(--h-border) 40%, transparent), transparent); }
+.hypr-section-head .act { font-size: 9px; color: var(--h-green); display: flex; align-items: center; gap: 4px; }
+.hypr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
+.hypr-grid.single { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.hypr-branch { display: flex; flex-direction: column; gap: 16px; }
+.hypr-child { margin-left: 40px; position: relative; }
+.hypr-child::before {
+  content: ''; position: absolute; left: -28px; top: 0; bottom: 50%; width: 28px;
+  border-left: 1.5px dashed color-mix(in srgb, var(--h-b1) 50%, transparent);
+  border-bottom: 1.5px dashed color-mix(in srgb, var(--h-b1) 50%, transparent);
+}
 
-/* Session detail — tmux pane */
-#session-detail-overlay {
-  position: fixed; inset: 0; background: rgba(22,22,22,0.9);
-  z-index: 300; display: flex; align-items: center; justify-content: center;
-  opacity: 0; pointer-events: none; transition: opacity 0.2s;
+/* Terminal window (session card) */
+.hypr-win {
+  padding: 1px; border-radius: 5px; background: var(--h-border);
+  cursor: pointer; transition: all 0.2s cubic-bezier(0.16,1,0.3,1);
+  box-shadow: 0 2px 8px var(--h-shadow);
 }
-#session-detail-overlay.visible { opacity: 1; pointer-events: all; }
-.tmux-pane {
-  background: var(--surface); border: 1px solid var(--border-hi);
-  border-radius: 6px; width: 480px; max-width: 92vw; max-height: 84vh;
-  overflow: hidden; display: flex; flex-direction: column;
+.hypr-win.active {
+  padding: 2px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--h-b1) 55%, transparent), color-mix(in srgb, var(--h-b2) 55%, transparent));
 }
-.tmux-pane-title {
+.hypr-win:hover, .hypr-win.focused {
+  padding: 2px;
+  background: linear-gradient(135deg, var(--h-b1), var(--h-b2));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--h-b1) 12%, transparent), 0 4px 16px var(--h-shadow);
+  transform: translateY(-1px);
+}
+.hypr-win-inner { background: var(--h-window); border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; height: 100%; }
+.hypr-win.focused .hypr-win-inner { background: var(--h-window-active); }
+
+.hypr-wtitle {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  background: var(--h-titlebar);
+  border-bottom: 1px solid color-mix(in srgb, var(--h-border) 40%, transparent);
+}
+.hypr-lights { display: flex; gap: 4px; }
+.hypr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--h-fg-meta); }
+.hypr-dot.run { background: var(--h-green); }
+.hypr-wname { flex: 1; text-align: center; font-size: 11px; color: var(--h-fg-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hypr-wname b { color: var(--h-fg); font-weight: 600; }
+.hypr-wname .agentmark { color: var(--h-magenta); margin-right: 3px; }
+.hypr-wname .sep { color: var(--h-fg-meta); }
+.hypr-wago { font-size: 9px; color: var(--h-fg-dim); display: flex; align-items: center; gap: 4px; }
+.hypr-pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--h-green);
+  box-shadow: 0 0 6px var(--h-green); display: inline-block; animation: hypr-pulse 2s ease-in-out infinite; }
+
+.hypr-term { position: relative; flex: 1; padding: 10px; line-height: 1.65; overflow: hidden; min-height: 86px; }
+.hypr-term .ln { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hypr-term .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 20px;
+  background: linear-gradient(transparent, var(--h-window)); pointer-events: none; }
+.hypr-win.focused .hypr-term .fade { background: linear-gradient(transparent, var(--h-window-active)); }
+.l-prompt { color: var(--h-green); }
+.l-tool   { color: var(--h-cyan); }
+.l-ok     { color: var(--h-green); }
+.l-error  { color: var(--h-red); }
+.l-cost   { color: var(--h-yellow); }
+.l-agent  { color: var(--h-magenta); }
+.l-info   { color: var(--h-blue); }
+.l-output { color: var(--h-fg-dim); }
+.hypr-cursor { display: inline-block; width: 7px; height: 13px; background: var(--h-accent);
+  animation: hypr-blink 1s step-end infinite; margin-top: 2px; }
+
+.hypr-wstatus {
   display: flex; align-items: center; justify-content: space-between;
-  background: var(--orange); color: #161616; font-weight: 700;
-  font-size: 11px; padding: 6px 10px; letter-spacing: 0.03em;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 5px 10px; font-size: 9px; color: var(--h-fg-dim);
+  border-top: 1px solid color-mix(in srgb, var(--h-border) 30%, transparent);
 }
-.tmux-pane-close {
-  background: transparent; border: none; color: #161616;
-  font-family: var(--font); font-size: 12px; cursor: pointer; line-height: 1;
+.hypr-wstatus .left { display: flex; gap: 8px; align-items: center; }
+.hypr-wstatus .tok { color: var(--h-fg); }
+.hypr-wstatus .cost { color: var(--h-yellow); }
+.hypr-wstatus .right { display: flex; gap: 4px; align-items: center; }
+.hypr-mdot { width: 5px; height: 5px; border-radius: 50%; }
+.m-opus { background: var(--h-yellow); }
+.m-sonnet { background: var(--h-red); }
+.m-haiku { background: var(--h-blue); }
+.m-other { background: var(--h-fg-meta); }
+.hypr-empty { text-align: center; color: var(--h-fg-meta); padding: 40px; font-size: 11px; }
+
+/* Detail panel — slides in from the right */
+.hypr-detail {
+  position: fixed; top: var(--title-h); right: 0;
+  bottom: calc(var(--nav-h) + var(--status-h));
+  width: 360px; max-width: 92vw; z-index: 250;
+  background: var(--h-window); border-left: 1px solid var(--h-border);
+  box-shadow: -8px 0 32px var(--h-shadow); backdrop-filter: blur(8px);
+  display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform 0.2s cubic-bezier(0.16,1,0.3,1);
 }
-.tmux-pane-close:hover { opacity: 0.7; }
-.tmux-pane-body { padding: 16px; overflow-y: auto; }
+.hypr-detail.open { transform: translateX(0); }
+.hypr-detail-head { background: linear-gradient(135deg, var(--h-b1), var(--h-b2)); }
+.hypr-detail-head-in {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px; background: color-mix(in srgb, var(--h-titlebar) 93%, transparent);
+}
+.hypr-detail-title { font-size: 13px; font-weight: 600; color: var(--h-fg); }
+.hypr-detail-title .sub { color: var(--h-fg-dim); font-weight: 400; }
+.hypr-detail-ws { font-size: 10px; color: var(--h-fg-dim); margin-top: 2px; }
+.hypr-x { background: color-mix(in srgb, var(--h-border) 60%, transparent); border: none;
+  color: var(--h-fg); width: 24px; height: 24px; border-radius: 4px; cursor: pointer;
+  font-family: var(--font); font-size: 12px; }
+.hypr-x:hover { background: var(--h-border); }
+.hypr-detail-body { flex: 1; overflow-y: auto; padding: 14px; }
+.hypr-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.hypr-stat { background: var(--h-titlebar); border: 1px solid color-mix(in srgb, var(--h-border) 40%, transparent);
+  border-radius: 4px; padding: 8px 10px; }
+.hypr-stat .lbl { font-size: 8px; color: var(--h-fg-meta); letter-spacing: 0.1em; margin-bottom: 3px; }
+.hypr-stat .val { font-size: 15px; font-weight: 700; color: var(--h-fg); }
+.hypr-stat .val.cost { color: var(--h-yellow); }
+.hypr-stat .val.cache { color: var(--h-green); }
+.hypr-dgroup { margin-bottom: 16px; }
+.hypr-dgroup-lbl { font-size: 9px; color: var(--h-fg-meta); letter-spacing: 0.1em; margin-bottom: 8px; }
+.hypr-drow { display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--h-border) 20%, transparent); font-size: 11px; color: var(--h-fg); }
+.hypr-drow.card { background: var(--h-titlebar); border: 1px solid color-mix(in srgb, var(--h-border) 40%, transparent);
+  border-radius: 4px; padding: 8px 10px; margin-bottom: 4px; }
+.hypr-drow .grow { flex: 1; }
+.hypr-drow .tk { color: var(--h-fg-dim); }
+.hypr-drow .ct { color: var(--h-yellow); }
+.hypr-drow .agentmark { color: var(--h-magenta); }
+.hypr-doutput { background: var(--h-bg); border: 1px solid color-mix(in srgb, var(--h-border) 40%, transparent);
+  border-radius: 4px; padding: 10px; line-height: 1.7; }
+.hypr-doutput .ln { white-space: pre-wrap; word-break: break-word; }
+
+/* Expo / workspace overview */
+.hypr-expo {
+  position: fixed; inset: 0; z-index: 400;
+  background: color-mix(in srgb, var(--h-bg) 91%, transparent); backdrop-filter: blur(12px);
+  display: flex; flex-direction: column; padding: 54px 32px 32px;
+  animation: hypr-expo-in 0.28s cubic-bezier(0.16,1,0.3,1);
+}
+.hypr-expo-head { text-align: center; margin-bottom: 20px; }
+.hypr-expo-head .t { font-size: 12px; color: var(--h-accent); letter-spacing: 0.2em; font-weight: 600; }
+.hypr-expo-head .s { font-size: 10px; color: var(--h-fg-dim); margin-top: 4px; }
+.hypr-expo-head .s b { color: var(--h-fg-meta); font-weight: 400; }
+.hypr-expo-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px; align-content: center; max-width: 1100px; margin: 0 auto; width: 100%; overflow-y: auto; }
+.hypr-expo-tile { cursor: pointer; transition: transform 0.18s ease; }
+.hypr-expo-tile:hover { transform: scale(1.03); }
+.hypr-expo-label { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 8px; padding: 0 2px; }
+.hypr-expo-label .badge { width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center;
+  justify-content: center; font-weight: 700; font-size: 10px;
+  background: color-mix(in srgb, var(--h-accent) 13%, transparent); color: var(--h-accent); }
+.hypr-expo-label .nm { color: var(--h-fg); font-weight: 500; }
+.hypr-expo-label .c { color: var(--h-fg-meta); }
+.hypr-expo-label .grow { flex: 1; }
+.hypr-expo-label .ct { color: var(--h-yellow); font-size: 9px; }
+.hypr-mini-desk { aspect-ratio: 16/10; border-radius: 8px; border: 1px solid var(--h-border);
+  background: radial-gradient(ellipse at 30% 30%, color-mix(in srgb, var(--h-b1) 8%, transparent), transparent 60%), var(--h-bg);
+  padding: 8px; display: flex; flex-wrap: wrap; gap: 5px; align-content: flex-start; overflow: hidden; }
+.hypr-mini-desk.act { border-color: color-mix(in srgb, var(--h-b1) 50%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--h-b1) 12%, transparent); }
+.hypr-mini { border-radius: 4px; padding: 1px; background: var(--h-border); flex: 1 1 100%; min-width: 0; }
+.hypr-mini.run { padding: 1.5px; background: linear-gradient(135deg, var(--h-b1), var(--h-b2)); }
+.hypr-mini.child { flex-basis: 44%; }
+.hypr-mini-in { border-radius: 3px; background: var(--h-window); overflow: hidden; }
+.hypr-mini-bar { display: flex; align-items: center; gap: 2px; padding: 2px 3px; background: var(--h-titlebar); }
+.hypr-mini-bar .d { width: 3px; height: 3px; border-radius: 50%; background: var(--h-fg-meta); }
+.hypr-mini-bar .d.run { background: var(--h-green); }
+.hypr-mini-bar .ln { flex: 1; height: 2px; border-radius: 1px; background: color-mix(in srgb, var(--h-border) 80%, transparent); }
+.hypr-mini-lines { padding: 3px; display: flex; flex-direction: column; gap: 2px; }
+.hypr-mini-lines .l { height: 2px; border-radius: 1px; opacity: 0.55; }
+.hypr-mini-empty { margin: auto; font-size: 9px; color: var(--h-fg-meta); }
+
+@keyframes hypr-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes hypr-blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes hypr-expo-in { from { transform: scale(1.04); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
 /* ── WEB USAGE ── */
 .web-org-row {
@@ -548,6 +760,7 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
   .stat-grid  { grid-template-columns: repeat(2,1fr); }
   .stat-chips { grid-template-columns: repeat(2,1fr); }
   .insight-grid { grid-template-columns: 1fr; }
-  .tmux-name { max-width: 40%; }
+  .hypr-grid, .hypr-grid.single { grid-template-columns: 1fr; }
+  .hypr-detail { width: 100%; }
   .web-limits { grid-template-columns: 1fr; }
 }

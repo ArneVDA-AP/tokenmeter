@@ -153,6 +153,7 @@ function makeCacheTrendChart(canvasId, labels, data) {
       borderColor: 'rgba(232,101,10,0.85)',
       backgroundColor: 'rgba(232,101,10,0.12)',
       fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5,
+      spanGaps: false, // idle days are null → render as gaps, not a dive to 0%
     }] },
     options: {
       responsive: true, maintainAspectRatio: true,
@@ -375,9 +376,14 @@ function renderClaude(data) {
     { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: 'rgba(212,162,122,0.85)', borderRadius: 3, borderSkipped: false },
   ]);
 
-  // Cache hit trend (per-day cacheRead / (cacheRead + input))
+  // Cache hit trend: cacheRead / (cacheRead + input + cacheWrite) per day.
+  // Days with no prompt tokens become null so the line shows a gap instead of
+  // sawtoothing down to 0%.
   makeCacheTrendChart('chart-cache-trend', dailyLabels(daily),
-    daily.map(d => d.cacheReadTokens / ((d.cacheReadTokens + d.inputTokens) || 1) * 100));
+    daily.map(d => {
+      const denom = d.cacheReadTokens + d.inputTokens + (d.cacheWriteTokens || 0);
+      return denom > 0 ? (d.cacheReadTokens / denom) * 100 : null;
+    }));
 
   // Heatmap and peak hours
   renderHeatmap(cl.heatmap);
@@ -456,121 +462,334 @@ function renderClaude(data) {
 }
 
 
-// ── Render Sessions (tmux-style) ─────────────────────────────────────────────
+// ── Render Sessions (Hyprland-style compositor overview) ─────────────────────
+// "Workspaces" = projects; each session is a terminal window; sub-agents spawned
+// inside a session (sidechains) render as indented child windows. Active = the
+// session wrote to its log within HYPR_ACTIVE_MS (a running Claude Code terminal).
+const HYPR_ACTIVE_MS = 10 * 60 * 1000;
+let hyprFilter = 'all';   // 'all' or a workspace id
+let hyprFocused = null;   // focused/selected session id
+let hyprDetailId = null;  // session id whose detail panel is open
+let hyprExpo = false;     // expo (workspace overview) open?
+let hyprTheme = 'nord';
+
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function hyprIsActive(s) { return (Date.now() - (s.endTime || s.mtime)) < HYPR_ACTIVE_MS; }
+function hyprShortId(id) {
+  const base = String(id || '').replace(/~a\d+$/, '');
+  const seg = base.split(/[-_/]/).pop() || base;
+  return seg.length > 8 ? seg.slice(-8) : seg;
+}
+function hyprModelFamilies(models) {
+  const fams = [];
+  for (const name of Object.keys(models || {})) {
+    const fam = /opus/i.test(name) ? 'opus' : /sonnet/i.test(name) ? 'sonnet'
+      : /haiku/i.test(name) ? 'haiku' : 'other';
+    if (!fams.includes(fam)) fams.push(fam);
+  }
+  return fams;
+}
+function hyprAgo(ts) {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000), h = Math.floor(diff / 3600000), d = Math.floor(diff / 86400000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + 'm';
+  if (h < 24) return h + 'h';
+  return d + 'd';
+}
+function hyprAll(cl) {
+  const out = [];
+  for (const s of (cl?.sessions || [])) { out.push(s); for (const c of (s.childSessions || [])) out.push(c); }
+  return out;
+}
+function hyprFind(cl, id) { return hyprAll(cl).find(s => s.id === id); }
+function hyprWsHasActive(roots, wsId) {
+  return roots.some(s => s.workspace === wsId &&
+    (hyprIsActive(s) || (s.childSessions || []).some(hyprIsActive)));
+}
+const noTilde = (n) => fmtCost(n).replace('~', '');
+
 function renderSessions(data) {
   const cl = data?.claude;
-  const sessions = cl?.sessions || [];
-  const listEl  = document.getElementById('se-list');
-  const emptyEl = document.getElementById('se-empty');
-  if (!listEl) return;
+  const rootEl = document.getElementById('hypr-root');
+  if (!rootEl) return;
+  applyHyprTheme(rootEl, hyprTheme);
 
-  // Project filter dropdown — rebuild, preserving the current selection.
-  const projSel = document.getElementById('se-project');
-  const projects = [...new Set(sessions.map(s => s.project))].sort();
-  const curProj = projSel.value;
-  projSel.innerHTML = '<option value="">all projects</option>' +
-    projects.map(p => `<option value="${p}">${p}</option>`).join('');
-  projSel.value = projects.includes(curProj) ? curProj : '';
+  const roots = cl?.sessions || [];
+  const workspaces = cl?.workspaces || [];
+  const activeCount = hyprAll(cl).filter(hyprIsActive).length;
+  const visibleRoots = hyprFilter === 'all' ? roots : roots.filter(s => s.workspace === hyprFilter);
 
-  // tmux status line
-  const totalCost = sessions.reduce((s, x) => s + (x.estimatedCostUSD || 0), 0);
-  document.getElementById('se-status-summary').textContent =
-    `${sessions.length} sessions · ${fmtCost(totalCost)} · cache ${(cl?.globalCacheHitPct || 0).toFixed(0)}%`;
+  rootEl.innerHTML =
+    hyprWaybar(workspaces, roots, cl, activeCount) +
+    hyprStrip(workspaces, roots) +
+    hyprGrid(visibleRoots, workspaces) +
+    `<div id="hypr-detail" class="hypr-detail"></div>` +
+    (hyprExpo ? hyprExpoView(workspaces, roots) : '');
 
-  // Filter
-  const text = (document.getElementById('se-filter-text').value || '').toLowerCase().trim();
-  const proj = projSel.value;
-  let rows = sessions.filter(s =>
-    (!proj || s.project === proj) &&
-    (!text || s.project.toLowerCase().includes(text) || (s.id || '').toLowerCase().includes(text)));
-
-  // Sort
-  const sort = document.getElementById('se-sort').value;
-  const cmp = {
-    recent:   (a, b) => b.endTime - a.endTime,
-    tokens:   (a, b) => b.totalTokens - a.totalTokens,
-    cost:     (a, b) => b.estimatedCostUSD - a.estimatedCostUSD,
-    duration: (a, b) => b.durationMs - a.durationMs,
-  }[sort] || ((a, b) => b.endTime - a.endTime);
-  rows = rows.slice().sort(cmp);
-
-  const CAP = 100;
-  const capped = rows.slice(0, CAP);
-  const maxTokens = Math.max(...capped.map(s => s.totalTokens), 1);
-
-  listEl.innerHTML = '';
-  capped.forEach((s, i) => {
-    const row = document.createElement('div');
-    row.className = 'tmux-row';
-    row.dataset.sessionId = s.id;
-    row.dataset.project = s.project;
-    const share = pct(s.totalTokens, maxTokens);
-    row.innerHTML = `
-      <span class="tmux-idx">${i}:</span>
-      <span class="tmux-name">${s.project}</span>
-      <span class="tmux-meta">${s.recordCount} msg · ${fmtTokens(s.totalTokens)} · ${fmtCost(s.estimatedCostUSD)} · cache ${(s.cacheHitPct || 0).toFixed(0)}% · ${fmtDuration(s.durationMs)} · ${fmtRelTime(s.endTime)}</span>
-      <span class="tmux-bar"><span class="tmux-bar-fill" style="width:${share}%"></span></span>
-    `;
-    listEl.appendChild(row);
-  });
-
-  emptyEl.style.display = capped.length === 0 ? 'block' : 'none';
-  if (rows.length > CAP) {
-    const more = document.createElement('div');
-    more.className = 'tmux-more';
-    more.textContent = `… ${rows.length - CAP} more — refine the filter to narrow`;
-    listEl.appendChild(more);
+  if (hyprDetailId) {
+    const s = hyprFind(cl, hyprDetailId);
+    if (s) hyprOpenDetail(s, workspaces);
+    else hyprDetailId = null;
   }
 }
 
-function renderSessionDetail(session) {
-  if (!session) return;
-  document.getElementById('sd-title').textContent = `${session.project} / ${session.id}`;
-
-  const stats = [
-    ['Started', fmtClock(session.startTime)],
-    ['Ended', fmtClock(session.endTime)],
-    ['Duration', fmtDuration(session.durationMs)],
-    ['Messages', session.recordCount],
-    ['Input', fmtTokens(session.inputTokens)],
-    ['Output', fmtTokens(session.outputTokens)],
-    ['Cache Read', fmtTokens(session.cacheReadTokens)],
-    ['Cache Write', fmtTokens(session.cacheWriteTokens)],
-    ['Est. Cost', fmtCost(session.estimatedCostUSD)],
-    ['Cache Hit', (session.cacheHitPct || 0).toFixed(1) + '%'],
-  ];
-  document.getElementById('sd-stats').innerHTML = stats.map(([label, val]) => `
-    <div class="stat-card">
-      <div class="stat-card-label">${label}</div>
-      <div class="stat-card-value">${val}</div>
+function hyprWaybar(workspaces, roots, cl, activeCount) {
+  const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const pills = workspaces.map(ws => `
+    <div class="hypr-ws ${hyprFilter === ws.id ? 'active' : ''}" data-ws="${ws.id}">
+      <span class="ix">${ws.id}</span>${escHtml(ws.name)}
+      ${hyprWsHasActive(roots, ws.id) ? '<span class="hypr-pulse"></span>' : ''}
     </div>`).join('');
+  const themeOpts = HYPR_THEME_ORDER.map(k =>
+    `<option value="${k}" ${k === hyprTheme ? 'selected' : ''}>${HYPR_THEMES[k].label}</option>`).join('');
+  return `
+    <div class="hypr-bar">
+      <div style="display:flex;gap:2px;align-items:center">${pills}</div>
+      <div class="hypr-bar-title"><b>tokenmeter</b><span class="sep">—</span>session overview</div>
+      <div class="hypr-bar-right">
+        <select class="hypr-theme-sel" id="hypr-theme-sel" title="Theme">${themeOpts}</select>
+        <div class="hypr-mod btn ${hyprExpo ? 'on' : ''}" data-expo="1" title="Workspace overview (\`)"><span>▦</span><span>expo</span></div>
+        <div class="hypr-mod"><span class="tok">◆</span><span>${cl?.totalSessions || 0} sessions</span><span class="cost">${noTilde(cl?.estimatedCostUSD || 0)}</span></div>
+        ${activeCount > 0 ? `<div class="hypr-mod active-mod"><span style="color:var(--h-green)">●</span><span>${activeCount} active</span></div>` : ''}
+        <div class="hypr-mod"><span class="clk">${time}</span></div>
+      </div>
+    </div>`;
+}
 
-  // Per-model table within the session
-  const models = session.models || {};
-  const entries = Object.entries(models).sort((a, b) =>
-    (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens));
-  document.getElementById('sd-models').innerHTML = entries.map(([model, st]) => {
-    const tokens = st.inputTokens + st.outputTokens;
-    const hit = st.cacheReadTokens / ((st.cacheReadTokens + st.inputTokens) || 1) * 100;
-    return `<tr>
-      <td class="mono" title="${model}">${model.length > 28 ? model.slice(0, 26) + '…' : model}</td>
-      <td class="mono dim">${fmtTokens(tokens)}</td>
-      <td class="mono dim">${fmtCost(st.estimatedCostUSD)}</td>
-      <td class="mono dim">${hit.toFixed(0)}%</td>
-    </tr>`;
+function hyprStrip(workspaces, roots) {
+  const btns = workspaces.map(ws => {
+    const count = roots.filter(s => s.workspace === ws.id).length;
+    return `
+      <div class="hypr-strip-btn ${hyprFilter === ws.id ? 'active' : ''}" data-ws="${ws.id}">
+        <span class="n">${ws.id}</span><span>${escHtml(ws.name)}</span><span class="c">${count}</span>
+        ${hyprWsHasActive(roots, ws.id) ? '<span class="hypr-pulse"></span>' : ''}
+      </div>`;
   }).join('');
+  return `<div class="hypr-strip">
+    <div class="hypr-strip-btn ${hyprFilter === 'all' ? 'active' : ''}" data-ws="all">ALL</div>${btns}
+  </div>`;
+}
 
-  // Token split by model
-  makeBarChart('chart-session-models',
-    entries.map(([m]) => m.length > 16 ? m.slice(0, 14) + '…' : m),
-    [{ label: 'Tokens', data: entries.map(([, st]) => st.inputTokens + st.outputTokens),
-       backgroundColor: 'rgba(212,162,122,0.85)', borderRadius: 3, borderSkipped: false }]);
+function hyprGrid(visibleRoots, workspaces) {
+  if (!visibleRoots.length) {
+    return `<div class="hypr-grid-wrap"><div class="hypr-empty">no sessions in the last 90 days.</div></div>`;
+  }
+  if (hyprFilter === 'all') {
+    const groups = {};
+    for (const s of visibleRoots) (groups[s.workspace] = groups[s.workspace] || []).push(s);
+    const ids = Object.keys(groups).map(Number).sort((a, b) => a - b);
+    const sections = ids.map(wsId => {
+      const ws = workspaces.find(w => w.id === wsId);
+      const list = groups[wsId];
+      const act = hyprWsHasActive(list, wsId);
+      return `<div>
+        <div class="hypr-section-head">
+          <span class="ix">${wsId}</span>
+          <span class="nm">${escHtml(ws ? ws.name : 'workspace ' + wsId)}</span>
+          <span class="rule"></span>
+          ${act ? '<span class="act"><span class="hypr-pulse"></span>active</span>' : ''}
+        </div>
+        <div class="hypr-grid">${list.map(hyprBranch).join('')}</div>
+      </div>`;
+    }).join('');
+    return `<div class="hypr-grid-wrap">${sections}</div>`;
+  }
+  const single = visibleRoots.length <= 2;
+  return `<div class="hypr-grid-wrap"><div class="hypr-grid ${single ? 'single' : ''}">${visibleRoots.map(hyprBranch).join('')}</div></div>`;
+}
 
-  document.getElementById('session-detail-overlay').classList.add('visible');
+function hyprBranch(root) {
+  const kids = (root.childSessions || []).map(c => `<div class="hypr-child">${hyprWin(c, true)}</div>`).join('');
+  return `<div class="hypr-branch">${hyprWin(root, false)}${kids}</div>`;
+}
+
+function hyprWin(s, isChild) {
+  const active = hyprIsActive(s);
+  const cls = ['hypr-win'];
+  if (active) cls.push('active');
+  if (hyprFocused === s.id) cls.push('focused');
+  const lines = (s.preview || []).map(l => `<div class="ln l-${l.type}">${escHtml(l.text)}</div>`).join('');
+  const dots = hyprModelFamilies(s.models).map(f => `<span class="hypr-mdot m-${f}"></span>`).join('');
+  return `
+    <div class="${cls.join(' ')}" data-sid="${escHtml(s.id)}">
+      <div class="hypr-win-inner">
+        <div class="hypr-wtitle">
+          <div class="hypr-lights"><span class="hypr-dot ${active ? 'run' : ''}"></span><span class="hypr-dot"></span><span class="hypr-dot"></span></div>
+          <div class="hypr-wname">${isChild ? '<span class="agentmark">⊳</span>' : ''}<b>${escHtml((s.agents && s.agents[0]) || 'main')}</b><span class="sep"> · </span>${escHtml(hyprShortId(s.id))}</div>
+          <div class="hypr-wago">${hyprAgo(s.endTime || s.mtime)}${active ? '<span class="hypr-pulse"></span>' : ''}</div>
+        </div>
+        <div class="hypr-term">
+          ${lines}
+          ${active ? '<div><span class="hypr-cursor"></span></div>' : ''}
+          <div class="fade"></div>
+        </div>
+        <div class="hypr-wstatus">
+          <div class="left"><span>${s.recordCount || 0}msg</span><span class="tok">${fmtTokens(s.totalTokens)}</span><span class="cost">${noTilde(s.estimatedCostUSD)}</span></div>
+          <div class="right">${dots}<span>cache ${Math.round(s.cacheHitPct || 0)}%</span></div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function hyprDetailHTML(s, workspaces) {
+  const cl = usageData?.claude;
+  const active = hyprIsActive(s);
+  const stats = [
+    ['TOKENS', fmtTokens(s.totalTokens), ''],
+    ['COST', noTilde(s.estimatedCostUSD), 'cost'],
+    ['CACHE', Math.round(s.cacheHitPct || 0) + '%', 'cache'],
+    ['MSGS', s.recordCount || 0, ''],
+    ['TIME', fmtDuration(s.durationMs), ''],
+    ['STATUS', active ? 'ACTIVE' : 'ENDED', active ? 'cache' : ''],
+  ];
+  const statCards = stats.map(([l, v, c]) =>
+    `<div class="hypr-stat"><div class="lbl">${l}</div><div class="val ${c}">${escHtml(String(v))}</div></div>`).join('');
+
+  const modelRows = Object.entries(s.models || {})
+    .sort((a, b) => (b[1].inputTokens + b[1].outputTokens) - (a[1].inputTokens + a[1].outputTokens))
+    .map(([m, st]) => {
+      const fam = hyprModelFamilies({ [m]: st })[0];
+      return `<div class="hypr-drow"><span class="hypr-mdot m-${fam}"></span><span class="grow">${escHtml(m)}</span><span class="tk">${fmtTokens(st.inputTokens + st.outputTokens)}</span><span class="ct">${noTilde(st.estimatedCostUSD)}</span></div>`;
+    }).join('') || '<div class="hypr-drow"><span class="grow" style="color:var(--h-fg-meta)">no model usage</span></div>';
+
+  let rel = '';
+  if (s.parent) {
+    const p = hyprFind(cl, s.parent);
+    if (p) rel += `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">PARENT SESSION</div>
+      <div class="hypr-drow card" data-sid="${escHtml(p.id)}" style="cursor:pointer"><span class="agentmark">⊳</span><span class="grow">${escHtml(p.agents[0])}</span><span class="tk">${escHtml(hyprShortId(p.id))}</span></div></div>`;
+  }
+  if (s.childSessions && s.childSessions.length) {
+    rel += `<div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SPAWNED AGENTS</div>${s.childSessions.map(c =>
+      `<div class="hypr-drow card" data-sid="${escHtml(c.id)}" style="cursor:pointer"><span class="hypr-dot ${hyprIsActive(c) ? 'run' : ''}"></span><span class="grow">${escHtml(c.agents[0])}</span><span class="tk">${fmtTokens(c.totalTokens)}</span><span class="ct">${noTilde(c.estimatedCostUSD)}</span></div>`).join('')}</div>`;
+  }
+
+  const out = (s.preview || []).map(l => `<div class="ln l-${l.type}">${escHtml(l.text)}</div>`).join('');
+  return `
+    <div class="hypr-detail-head"><div class="hypr-detail-head-in">
+      <div>
+        <div class="hypr-detail-title">${escHtml((s.agents && s.agents[0]) || 'main')}<span class="sub"> · ${escHtml(hyprShortId(s.id))}</span></div>
+        <div class="hypr-detail-ws">${escHtml(s.project)} · workspace ${s.workspace}</div>
+      </div>
+      <button class="hypr-x" id="hypr-detail-x" title="Close">✕</button>
+    </div></div>
+    <div class="hypr-detail-body">
+      <div class="hypr-stats">${statCards}</div>
+      <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">MODELS</div>${modelRows}</div>
+      ${rel}
+      <div class="hypr-dgroup"><div class="hypr-dgroup-lbl">SESSION OUTPUT</div><div class="hypr-doutput">${out}</div></div>
+    </div>`;
+}
+
+function hyprOpenDetail(s, workspaces) {
+  const el = document.getElementById('hypr-detail');
+  if (!el) return;
+  el.classList.remove('open');
+  el.innerHTML = hyprDetailHTML(s, workspaces);
+  void el.offsetWidth; // force reflow so the slide-in transition runs from off-screen
+  el.classList.add('open');
 }
 
 function closeSessionDetail() {
-  document.getElementById('session-detail-overlay').classList.remove('visible');
+  hyprDetailId = null;
+  hyprFocused = null;
+  const el = document.getElementById('hypr-detail');
+  if (el) el.classList.remove('open');
+  document.querySelectorAll('.hypr-win.focused').forEach(w => w.classList.remove('focused'));
+}
+
+function hyprExpoView(workspaces, roots) {
+  const tiles = workspaces.map(ws => {
+    const list = roots.filter(s => s.workspace === ws.id);
+    const act = hyprWsHasActive(list, ws.id);
+    const totalCost = list.reduce((a, s) =>
+      a + (s.estimatedCostUSD || 0) + (s.childSessions || []).reduce((b, c) => b + (c.estimatedCostUSD || 0), 0), 0);
+    const minis = list.length
+      ? list.map(root => {
+          const kids = root.childSessions || [];
+          return `<div style="flex:1 1 ${kids.length ? '100%' : '46%'};display:flex;flex-wrap:wrap;gap:4px;min-width:0">${hyprMini(root, false)}${kids.map(c => hyprMini(c, true)).join('')}</div>`;
+        }).join('')
+      : '<div class="hypr-mini-empty">empty</div>';
+    return `<div class="hypr-expo-tile" data-ws="${ws.id}">
+      <div class="hypr-expo-label"><span class="badge">${ws.id}</span><span class="nm">${escHtml(ws.name)}</span><span class="c">${list.length}</span><span class="grow"></span>${act ? '<span class="hypr-pulse"></span>' : ''}<span class="ct">$${totalCost.toFixed(2)}</span></div>
+      <div class="hypr-mini-desk ${act ? 'act' : ''}">${minis}</div>
+    </div>`;
+  }).join('');
+  return `<div class="hypr-expo" id="hypr-expo">
+    <div class="hypr-expo-head"><div class="t">WORKSPACES</div><div class="s">click a workspace to enter · <b>esc to close</b></div></div>
+    <div class="hypr-expo-grid">${tiles}</div>
+  </div>`;
+}
+
+function hyprMini(s, isChild) {
+  const active = hyprIsActive(s);
+  const lines = (s.preview || []).slice(0, 4).map((l, i) => {
+    const w = [70, 90, 55, 80][i % 4];
+    return `<div class="l l-${l.type}" style="width:${w}%;background:currentColor"></div>`;
+  }).join('');
+  return `<div class="hypr-mini ${active ? 'run' : ''} ${isChild ? 'child' : ''}"><div class="hypr-mini-in">
+    <div class="hypr-mini-bar"><span class="d ${active ? 'run' : ''}"></span><span class="ln"></span>${active ? '<span class="d run"></span>' : ''}</div>
+    <div class="hypr-mini-lines">${lines}</div>
+  </div></div>`;
+}
+
+// Click delegation for the whole sessions surface (rebuilt on every render).
+function hyprHandleClick(e) {
+  const cl = usageData?.claude;
+  if (e.target.closest('#hypr-detail-x')) { closeSessionDetail(); return; }
+
+  const expoBtn = e.target.closest('[data-expo]');
+  if (expoBtn) { hyprExpo = !hyprExpo; renderSessions(usageData); return; }
+
+  // A spawned-agent / parent row inside the detail panel.
+  const drow = e.target.closest('.hypr-drow.card[data-sid]');
+  if (drow) {
+    const s = hyprFind(cl, drow.dataset.sid);
+    if (s) { hyprDetailId = s.id; hyprFocused = s.id; hyprOpenDetail(s, cl?.workspaces || []); }
+    return;
+  }
+
+  const wsBtn = e.target.closest('[data-ws]');
+  if (wsBtn) {
+    const v = wsBtn.dataset.ws;
+    hyprFilter = v === 'all' ? 'all' : Number(v);
+    hyprExpo = false;
+    renderSessions(usageData);
+    return;
+  }
+
+  // Clicking the expo backdrop (not a tile) closes it.
+  if (e.target.id === 'hypr-expo') { hyprExpo = false; renderSessions(usageData); return; }
+
+  const win = e.target.closest('.hypr-win');
+  if (win) {
+    const sid = win.dataset.sid;
+    if (hyprDetailId === sid) { closeSessionDetail(); return; }
+    const s = hyprFind(cl, sid);
+    if (!s) return;
+    document.querySelectorAll('.hypr-win.focused').forEach(w => w.classList.remove('focused'));
+    win.classList.add('focused');
+    hyprDetailId = sid;
+    hyprFocused = sid;
+    hyprOpenDetail(s, cl?.workspaces || []);
+  }
+}
+
+// Keyboard for the sessions surface: backtick toggles expo, Esc closes overlays.
+function hyprKeydown(e) {
+  if (!document.getElementById('page-sessions')?.classList.contains('active')) return;
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+  if (e.key === '`' && !typing) {
+    e.preventDefault();
+    hyprExpo = !hyprExpo;
+    renderSessions(usageData);
+  } else if (e.key === 'Escape') {
+    if (hyprExpo) { hyprExpo = false; renderSessions(usageData); }
+    else if (hyprDetailId) { closeSessionDetail(); }
+  }
 }
 
 // ── Render Web Usage (claude.ai, via the Claude Usage extension mirror) ───────
@@ -754,20 +973,15 @@ async function init() {
     if (e.target === document.getElementById('settings-overlay')) closeSettings();
   });
 
-  // Sessions tab: filter/sort + row drill-down
-  document.getElementById('se-filter-text').addEventListener('input',  () => renderSessions(usageData));
-  document.getElementById('se-project').addEventListener('change',     () => renderSessions(usageData));
-  document.getElementById('se-sort').addEventListener('change',        () => renderSessions(usageData));
-  document.getElementById('se-list').addEventListener('click', e => {
-    const row = e.target.closest('.tmux-row');
-    if (!row) return;
-    const { sessionId, project } = row.dataset;
-    const s = (usageData?.claude?.sessions || []).find(x => x.id === sessionId && x.project === project);
-    renderSessionDetail(s);
-  });
-  document.getElementById('sd-close').addEventListener('click', closeSessionDetail);
-  document.getElementById('session-detail-overlay').addEventListener('click', e => {
-    if (e.target === document.getElementById('session-detail-overlay')) closeSessionDetail();
+  // Sessions surface (Hyprland overview) — delegated clicks + theme switch.
+  const hyprRootEl = document.getElementById('hypr-root');
+  hyprRootEl.addEventListener('click', hyprHandleClick);
+  hyprRootEl.addEventListener('change', e => {
+    if (e.target.id === 'hypr-theme-sel') {
+      hyprTheme = e.target.value;
+      applyHyprTheme(hyprRootEl, hyprTheme);
+      tm.saveSettings({ sessionTheme: hyprTheme }).catch(() => {});
+    }
   });
 
   // Dismiss idle on click anywhere in content
@@ -776,6 +990,7 @@ async function init() {
   document.addEventListener('keydown', e => {
     resetIdleTimer();
     if ((e.ctrlKey || e.metaKey) && e.key === 'r') { e.preventDefault(); refresh(); }
+    hyprKeydown(e);
   });
 
   // Push updates from main process
@@ -786,6 +1001,7 @@ async function init() {
     const settings = await tm.getSettings();
     currentSettings = settings;
     idleTimeout = (settings.idleTimeout || 60) * 1000;
+    if (settings.sessionTheme && HYPR_THEMES[settings.sessionTheme]) hyprTheme = settings.sessionTheme;
   } catch { /* use default */ }
 
   // Initial data load

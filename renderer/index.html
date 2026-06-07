@@ -208,28 +208,9 @@
     <div class="session-list" id="cl-sessions-list"></div>
   </div><!-- /page-claude -->
 
-  <!-- PAGE: Sessions (tmux-style) -->
+  <!-- PAGE: Sessions (Hyprland-style compositor overview) -->
   <div class="page" id="page-sessions">
-    <div class="tmux-status">
-      <span class="tmux-status-tag">[tokenmeter]</span>
-      <span id="se-status-summary">— sessions</span>
-    </div>
-
-    <div class="session-controls">
-      <input class="setting-input" id="se-filter-text" type="text" placeholder="filter by project…">
-      <select class="setting-select" id="se-project">
-        <option value="">all projects</option>
-      </select>
-      <select class="setting-select" id="se-sort">
-        <option value="recent">sort: recent</option>
-        <option value="tokens">sort: tokens</option>
-        <option value="cost">sort: cost</option>
-        <option value="duration">sort: duration</option>
-      </select>
-    </div>
-
-    <div id="se-list" class="tmux-list"></div>
-    <div id="se-empty" class="tmux-empty" style="display:none">no sessions match.</div>
+    <div id="hypr-root" class="hypr-root"></div>
   </div><!-- /page-sessions -->
 
   <!-- PAGE: Web (claude.ai usage via the Claude Usage extension) -->
@@ -334,33 +315,10 @@
   </div>
 </div>
 
-<!-- Session Detail (tmux pane) -->
-<div id="session-detail-overlay">
-  <div class="tmux-pane">
-    <div class="tmux-pane-title">
-      <span id="sd-title">session</span>
-      <button class="tmux-pane-close" id="sd-close" title="Close">✕</button>
-    </div>
-    <div class="tmux-pane-body">
-      <div class="stat-grid" id="sd-stats"></div>
-      <div class="section-heading">Models</div>
-      <div class="chart-container" style="padding:0;overflow:hidden">
-        <table class="breakdown-table">
-          <thead><tr><th>Model</th><th>Tokens</th><th>Est. Cost</th><th>Cache</th></tr></thead>
-          <tbody id="sd-models"></tbody>
-        </table>
-      </div>
-      <div class="section-heading">Token Split by Model</div>
-      <div class="chart-container">
-        <canvas id="chart-session-models" class="chart-canvas"></canvas>
-      </div>
-    </div>
-  </div>
-</div>
-
 <div id="toast" class="toast"></div>
 
 <script src="vendor/chart.umd.js"></script>
+<script src="hypr-themes.js"></script>
 <script src="animations.js"></script>
 <script src="app.js"></script>
 </body>

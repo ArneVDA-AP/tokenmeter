@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
   idleTimeout: 60,
   openAtLogin: false,
   dailyCostAlert: 0,
+  sessionTheme: 'nord', // Hyprland theme for the Sessions overview surface
 };
 
 function fmtTokensTray(n) {

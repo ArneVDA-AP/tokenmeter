@@ -1,7 +1,6 @@
 web-ext-artifacts/*
 .idea/*
 icon_new.psd
-manifest.json
 background_mv2.js
 run-android.bat
 .vscode/*
@@ -10,8 +9,6 @@ package-lock.json
 package.json
 eslint.config.js
 .claude/*
-content-components/ui_dataclasses.js
-content-components/ui_dataclasses.js
 *.png
 *.psd
 CLAUDE.md

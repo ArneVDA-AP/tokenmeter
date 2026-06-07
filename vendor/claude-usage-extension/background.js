@@ -5,6 +5,7 @@ import { tokenStorageManager, tokenCounter } from './bg-components/tokenManageme
 import { ClaudeAPI, ConversationAPI } from './bg-components/claude-api.js';
 import { UsageData } from './shared/dataclasses.js';
 import { scheduleAlarm, getAlarm, createNotification } from './bg-components/electron-compat.js';
+import { startTokenmeterMirror } from './tokenmeter-mirror/mirror.js';
 
 const INTERCEPT_PATTERNS = {
 	onBeforeRequest: {
@@ -381,6 +382,7 @@ async function requestData(message, sender, orgId) {
 	return true;
 }
 messageRegistry.register(requestData);
+startTokenmeterMirror({ getUsage: getPopupUsageData });
 
 async function getPopupUsageData() {
 	const orgMap = new Map(); // orgId -> cookieStoreId

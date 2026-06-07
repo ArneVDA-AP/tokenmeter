@@ -44,7 +44,7 @@
   }
 
   function mount(host, opts={}) {
-    const { preset, color='#CD7F6A', bg='transparent', speed=1, autoplay=true } = opts;
+    const { preset, color='var(--creature)', bg='transparent', speed=1, autoplay=true } = opts;
     host.innerHTML='';
     host.style.cssText=`position:relative;width:100%;aspect-ratio:1/1;background:${bg};display:grid;grid-template-columns:repeat(20,1fr);grid-template-rows:repeat(20,1fr)`;
     const cells=[];
@@ -249,7 +249,7 @@ function initCreature() {
 
   creatureApi = window.PixelEngine.mount(host, {
     preset: PRESET_SURPRISE,
-    color: '#CD7F6A',
+    color: 'var(--creature)',
     bg: 'transparent',
     speed: 1,
   });

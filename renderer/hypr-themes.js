@@ -1,8 +1,21 @@
-// Hyprland/Omarchy-inspired theme palettes for the Session Overview surface.
-// Each theme is applied as CSS custom properties (--h-*) on the hypr-root
-// element, scoped so the rest of Tokenmeter keeps its orange/neutral identity.
+// App-wide theme system for Tokenmeter.
+// Themes are applied to :root (document.documentElement) setting both the
+// app-level vars (--bg, --surface, --orange, etc.) used throughout the UI
+// and the Sessions-surface --h-* vars consumed by the Hyprland compositor view.
+// The 5 Hyprland palettes (nord, everforest, gruvbox, macchiato, rosepine) are
+// unchanged; 'tokenmeter' is added as the default neutral-gray + orange look.
 
-window.HYPR_THEMES = {
+window.APP_THEMES = {
+  tokenmeter: {
+    label: 'Tokenmeter',
+    bg: '#161616', bgPanel: 'rgba(22,22,22,0.88)', bgWindow: '#1e1e1e',
+    bgWindowActive: '#252525', bgTitlebar: '#1e1e1e',
+    borderActive1: '#e8650a', borderActive2: '#f07020', borderInactive: '#2e2e2e',
+    fg: '#e8e8e8', fgDim: '#b0b0b0', fgMeta: '#707070', fgBright: '#ffffff',
+    red: '#e0431a', green: '#4caf75', yellow: '#f07020', blue: '#4a9eff',
+    magenta: '#e8650a', cyan: '#4a9eff', accent: '#e8650a', accentAlt: '#f07020',
+    selBg: 'rgba(232,101,10,0.13)', shadowColor: 'rgba(0,0,0,0.30)',
+  },
   nord: {
     label: 'Nord',
     bg: '#2e3440', bgPanel: 'rgba(46,52,64,0.88)', bgWindow: '#2e3440',
@@ -55,9 +68,10 @@ window.HYPR_THEMES = {
   },
 };
 
-window.HYPR_THEME_ORDER = ['nord', 'everforest', 'gruvbox', 'macchiato', 'rosepine'];
+window.APP_THEME_ORDER = ['tokenmeter', 'nord', 'everforest', 'gruvbox', 'macchiato', 'rosepine'];
 
-// Map a theme object onto the CSS custom properties consumed by the stylesheet.
+// Map theme object keys onto the --h-* CSS custom properties consumed by the
+// Sessions surface stylesheet.
 const HYPR_VAR_MAP = {
   bg: '--h-bg', bgPanel: '--h-panel', bgWindow: '--h-window',
   bgWindowActive: '--h-window-active', bgTitlebar: '--h-titlebar',
@@ -68,11 +82,41 @@ const HYPR_VAR_MAP = {
   selBg: '--h-sel', shadowColor: '--h-shadow',
 };
 
-window.applyHyprTheme = function (el, key) {
-  const theme = window.HYPR_THEMES[key] || window.HYPR_THEMES.nord;
+// applyTheme(key) — sets both --h-* and app-level vars on :root, making the
+// chosen theme active across the whole application.
+window.applyTheme = function (key) {
+  const resolved = (window.APP_THEMES[key] ? key : 'tokenmeter');
+  const theme = window.APP_THEMES[resolved];
+  const root = document.documentElement;
+
+  // (a) Sessions-surface --h-* vars
   for (const [prop, cssVar] of Object.entries(HYPR_VAR_MAP)) {
-    el.style.setProperty(cssVar, theme[prop]);
+    root.style.setProperty(cssVar, theme[prop]);
   }
-  el.dataset.hyprTheme = key;
+
+  // (b) App-level vars — listed individually so multiple keys can map to the
+  //     same target var (e.g. accent → --border-hi, --orange, --creature).
+  root.style.setProperty('--bg',          theme.bg);
+  root.style.setProperty('--surface',     theme.bgWindow);
+  root.style.setProperty('--surface2',    theme.bgWindowActive);
+  root.style.setProperty('--border',      theme.borderInactive);
+  root.style.setProperty('--border-hi',   theme.accent);
+  root.style.setProperty('--orange',      theme.accent);
+  root.style.setProperty('--text',        theme.fg);
+  root.style.setProperty('--text-muted',  theme.fgDim);
+  root.style.setProperty('--text-dim',    theme.fgMeta);
+  root.style.setProperty('--green',       theme.green);
+  root.style.setProperty('--warn',        theme.red);
+  root.style.setProperty('--gemini',      theme.blue);
+  root.style.setProperty('--creature',    theme.accent);
+
+  root.dataset.theme = resolved;
   return theme;
 };
+
+// ── Backward compatibility ───────────────────────────────────────────────────
+// Other files still reference the old HYPR_* names and applyHyprTheme.
+window.HYPR_THEMES      = window.APP_THEMES;
+window.HYPR_THEME_ORDER = window.APP_THEME_ORDER;
+// el argument is ignored; theme is now applied globally to :root.
+window.applyHyprTheme = function (el, key) { return window.applyTheme(key); };

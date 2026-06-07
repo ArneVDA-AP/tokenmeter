@@ -102,5 +102,83 @@ check('corrupt JSON → available:false', () => {
 });
 
 fs.rmSync(dir, { recursive: true, force: true });
+
+// ── Aggregate assertions using the genWebUsage fixture ────────────────────────
+// Build a realistic ~32-conversation snapshot and assert derived fields.
+
+const { genWebUsage } = require('./lib/genFixtures');
+const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-web2-'));
+const file2 = path.join(dir2, 'web-usage.json');
+const fixedNow = Date.now();
+genWebUsage(file2, { now: fixedNow });
+const g = aggregateWebUsage(file2);
+
+// daily
+check('daily length === 14', () => assert.strictEqual(g.daily.length, 14));
+check('daily entries have correct shape', () => {
+  for (const entry of g.daily) {
+    assert.strictEqual(typeof entry.date, 'string', `date should be string, got ${typeof entry.date}`);
+    assert.match(entry.date, /^\d{4}-\d{2}-\d{2}$/, `date should be YYYY-MM-DD, got ${entry.date}`);
+    assert.strictEqual(typeof entry.tokens, 'number', `tokens should be number`);
+    assert.strictEqual(typeof entry.estimatedCostUSD, 'number', `estimatedCostUSD should be number`);
+    assert.strictEqual(typeof entry.conversations, 'number', `conversations should be number`);
+  }
+});
+check('daily is chronologically ordered (oldest → newest)', () => {
+  for (let i = 1; i < g.daily.length; i++) {
+    assert.ok(g.daily[i].date >= g.daily[i - 1].date,
+      `day[${i}].date ${g.daily[i].date} < day[${i - 1}].date ${g.daily[i - 1].date}`);
+  }
+});
+
+// hourly
+check('hourly length === 24', () => assert.strictEqual(g.hourly.length, 24));
+check('hourly all numbers', () => {
+  for (let i = 0; i < 24; i++) {
+    assert.strictEqual(typeof g.hourly[i], 'number', `hourly[${i}] should be number`);
+  }
+});
+check('hourly sum > 0 (conversations with timestamps contribute)', () => {
+  const total = g.hourly.reduce((a, b) => a + b, 0);
+  assert.ok(total > 0, `hourly sum should be > 0, got ${total}`);
+});
+
+// modelBreakdown
+check('modelBreakdown non-empty', () => assert.ok(g.modelBreakdown.length > 0));
+check('modelBreakdown sorted by tokens desc', () => {
+  for (let i = 1; i < g.modelBreakdown.length; i++) {
+    assert.ok(g.modelBreakdown[i].tokens <= g.modelBreakdown[i - 1].tokens,
+      `modelBreakdown not sorted at index ${i}`);
+  }
+});
+check('modelBreakdown entries have correct shape', () => {
+  for (const entry of g.modelBreakdown) {
+    assert.strictEqual(typeof entry.model, 'string', 'model should be string');
+    assert.strictEqual(typeof entry.count, 'number', 'count should be number');
+    assert.strictEqual(typeof entry.tokens, 'number', 'tokens should be number');
+    assert.strictEqual(typeof entry.estimatedCostUSD, 'number', 'estimatedCostUSD should be number');
+  }
+});
+
+// estimatedCostUSD + totalTokens
+check('estimatedCostUSD > 0', () => assert.ok(g.estimatedCostUSD > 0, `estimatedCostUSD should be > 0, got ${g.estimatedCostUSD}`));
+check('totalTokens === conversationTokens', () => assert.strictEqual(g.totalTokens, g.conversationTokens));
+
+// cacheSavingsUSD
+check('cacheSavingsUSD >= 0', () => assert.ok(g.cacheSavingsUSD >= 0, `cacheSavingsUSD should be >= 0, got ${g.cacheSavingsUSD}`));
+check('cacheSavingsUSD <= estimatedCostUSD', () => assert.ok(g.cacheSavingsUSD <= g.estimatedCostUSD,
+  `cacheSavingsUSD ${g.cacheSavingsUSD} > estimatedCostUSD ${g.estimatedCostUSD}`));
+
+// topConversations enriched with estimatedCostUSD
+check('each topConversations entry has numeric estimatedCostUSD', () => {
+  assert.ok(g.topConversations.length > 0, 'topConversations should be non-empty');
+  for (const c of g.topConversations) {
+    assert.strictEqual(typeof c.estimatedCostUSD, 'number',
+      `topConversations entry missing numeric estimatedCostUSD: ${JSON.stringify(c)}`);
+  }
+});
+
+fs.rmSync(dir2, { recursive: true, force: true });
+
 console.log(failures === 0 ? '\nAll web-usage tests passed.' : `\n${failures} test(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

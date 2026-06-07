@@ -29,6 +29,7 @@
 // }
 
 const fs = require('fs');
+const { calcClaudeCost } = require('./pricer');
 
 const LIMIT_KEYS = ['session', 'weekly', 'sonnetWeekly', 'opusWeekly'];
 const LIMIT_LABELS = {
@@ -38,6 +39,18 @@ const LIMIT_LABELS = {
   opusWeekly: 'Weekly · Opus',
 };
 const STALE_MS = 60 * 60 * 1000; // snapshot older than 1h is flagged stale
+
+// Conversations are context-heavy (input-dominant): assume 85% input / 15% output
+// of total tokens (context re-sent each turn). Used to estimate equivalent API cost.
+const WEB_INPUT_RATIO = 0.85;
+// How many days of daily history to compute
+const WEB_LOOKBACK_DAYS = 14;
+
+function estConvCostUSD(c) {
+  const len = c.length || 0;
+  if (!len) return 0;
+  return calcClaudeCost(c.model || '', len * WEB_INPUT_RATIO, len * (1 - WEB_INPUT_RATIO), 0, 0);
+}
 
 function normalizeLimits(limits) {
   const out = [];
@@ -88,12 +101,85 @@ function aggregateWebUsage(webUsagePath) {
 
   // Conversation aggregates.
   const conversations = Array.isArray(raw.conversations) ? raw.conversations : [];
-  const now = Date.now();
-  let totalTokens = 0, cachedCount = 0;
+  const nowTs = Date.now();
+  let totalConvTokens = 0, cachedCount = 0;
+  let estimatedCostUSD = 0;
   for (const c of conversations) {
-    totalTokens += c.length || 0;
-    if (c.conversationIsCachedUntil && c.conversationIsCachedUntil > now) cachedCount++;
+    totalConvTokens += c.length || 0;
+    if (c.conversationIsCachedUntil && c.conversationIsCachedUntil > nowTs) cachedCount++;
+    estimatedCostUSD += estConvCostUSD(c);
   }
+
+  // ── daily array (WEB_LOOKBACK_DAYS entries, oldest → newest) ─────────────────
+  // Build a map from YYYY-MM-DD → { tokens, estimatedCostUSD, conversations }
+  const now = new Date();
+  // Compute the date key for the oldest day in the window
+  const cutoffDate = new Date(now);
+  cutoffDate.setDate(cutoffDate.getDate() - (WEB_LOOKBACK_DAYS - 1));
+  cutoffDate.setHours(0, 0, 0, 0);
+  const cutoffTs = cutoffDate.getTime();
+
+  const dailyMap = new Map();
+  for (const c of conversations) {
+    if (!c.lastMessageTimestamp) continue;
+    const ts = c.lastMessageTimestamp;
+    if (ts < cutoffTs) continue;
+    const dateKey = new Date(ts).toLocaleDateString('en-CA');
+    if (!dailyMap.has(dateKey)) {
+      dailyMap.set(dateKey, { tokens: 0, estimatedCostUSD: 0, conversations: 0 });
+    }
+    const day = dailyMap.get(dateKey);
+    day.tokens += c.length || 0;
+    day.estimatedCostUSD += estConvCostUSD(c);
+    day.conversations += 1;
+  }
+
+  const daily = [];
+  for (let i = WEB_LOOKBACK_DAYS - 1; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toLocaleDateString('en-CA');
+    const data = dailyMap.get(dateKey) || { tokens: 0, estimatedCostUSD: 0, conversations: 0 };
+    daily.push({ date: dateKey, ...data });
+  }
+
+  // ── hourly array (24 elements, indexed by hour of day) ───────────────────────
+  const hourly = new Array(24).fill(0);
+  for (const c of conversations) {
+    if (!c.lastMessageTimestamp) continue;
+    const hr = new Date(c.lastMessageTimestamp).getHours();
+    hourly[hr] += c.length || 0;
+  }
+
+  // ── modelBreakdown (sorted by tokens desc) ───────────────────────────────────
+  const modelMap = new Map();
+  for (const c of conversations) {
+    const key = c.model || 'unknown';
+    if (!modelMap.has(key)) {
+      modelMap.set(key, { model: key, count: 0, tokens: 0, estimatedCostUSD: 0 });
+    }
+    const entry = modelMap.get(key);
+    entry.count += 1;
+    entry.tokens += c.length || 0;
+    entry.estimatedCostUSD += estConvCostUSD(c);
+  }
+  const modelBreakdown = Array.from(modelMap.values()).sort((a, b) => b.tokens - a.tokens);
+
+  // ── cacheSavingsUSD ──────────────────────────────────────────────────────────
+  // Use the extension's own cost vs uncachedCost to derive a savings ratio,
+  // then scale into our estimated API cost.
+  let sumCost = 0, sumUncached = 0;
+  for (const c of conversations) {
+    sumCost += c.cost || 0;
+    sumUncached += c.uncachedCost || 0;
+  }
+  let cacheSavingsUSD = 0;
+  if (sumUncached > 0 && sumUncached >= sumCost) {
+    const ratio = 1 - sumCost / sumUncached;
+    cacheSavingsUSD = estimatedCostUSD * ratio;
+  }
+
+  // ── topConversations (enriched with estimatedCostUSD) ────────────────────────
   const topConversations = conversations
     .slice()
     .sort((a, b) => (b.cost || 0) - (a.cost || 0))
@@ -103,8 +189,9 @@ function aggregateWebUsage(webUsagePath) {
       model: c.model || 'unknown',
       length: c.length || 0,
       cost: c.cost || 0,
-      cached: !!(c.conversationIsCachedUntil && c.conversationIsCachedUntil > now),
+      cached: !!(c.conversationIsCachedUntil && c.conversationIsCachedUntil > nowTs),
       lastMessageTimestamp: c.lastMessageTimestamp || null,
+      estimatedCostUSD: estConvCostUSD(c),
     }));
 
   return {
@@ -116,8 +203,14 @@ function aggregateWebUsage(webUsagePath) {
     orgs,
     primaryOrg,
     totalConversations: conversations.length,
-    conversationTokens: totalTokens,
+    conversationTokens: totalConvTokens,
+    totalTokens: totalConvTokens,  // alias so renderer can treat it like the Claude tab
     cachedConversations: cachedCount,
+    estimatedCostUSD,
+    daily,
+    hourly,
+    modelBreakdown,
+    cacheSavingsUSD,
     topConversations,
     dataNote: stale
       ? 'Web-usage snapshot is over an hour old — open claude.ai with the extension to refresh.'

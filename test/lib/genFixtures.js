@@ -152,9 +152,50 @@ function gen(claudeProjectsDir, opts = {}) {
 }
 
 // Write a realistic web-usage.json snapshot (the contract Tokenmeter reads).
+// Uses a seeded RNG so output is deterministic — same seed → same conversations.
 function genWebUsage(filePath, opts = {}) {
   const now = opts.now || Date.now();
   const H = 3600000, D = 86400000;
+
+  // Seeded LCG — same approach as gen() above.
+  let s = (opts.seed || 7) >>> 0;
+  const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  const ri = (a, b) => Math.floor(a + rnd() * (b - a + 1));
+  const pick = (arr) => arr[ri(0, arr.length - 1)];
+
+  const models = ['claude-opus-4', 'claude-sonnet-4', 'claude-haiku-4'];
+
+  // Generate ~32 deterministic conversations spread over 14 days and 24 h.
+  const conversations = [];
+  for (let i = 0; i < 32; i++) {
+    const daysAgo = ri(0, 13);
+    const hoursAgo = ri(0, 23);
+    const lastMessageTimestamp = now - daysAgo * D - hoursAgo * H;
+    const model = pick(models);
+    const length = ri(8000, 180000);
+    const uncachedCost = ri(1000, 9000);
+    const costFraction = 0.3 + rnd() * 0.5; // 0.3..0.8
+    const cost = Math.round(uncachedCost * costFraction);
+    const isCached = rnd() < 0.5;
+    const conversationIsCachedUntil = isCached ? now + ri(1, 15) * 60000 : null;
+    const hasProject = rnd() < 0.4;
+    const projectUuid = hasProject ? `proj-${(ri(0, 0xffffff)).toString(16).padStart(6, '0')}` : null;
+    // Build a short deterministic hex-ish conversationId
+    const idNum = ((i + 1) * 0x9e3779b9 + s) >>> 0;
+    const conversationId = idNum.toString(16).padStart(8, '0');
+    conversations.push({
+      conversationId,
+      model,
+      length,
+      cost,
+      uncachedCost,
+      conversationIsCachedUntil,
+      lastMessageTimestamp,
+      projectUuid,
+      orgId: 'org-personal',
+    });
+  }
+
   const snapshot = {
     schemaVersion: 1,
     generatedAt: now - 4 * 60000,
@@ -170,11 +211,7 @@ function genWebUsage(filePath, opts = {}) {
       extraUsage: { isEnabled: true, monthlyLimit: 5000, usedCredits: 1800 },
       creditBalance: 7200,
     }],
-    conversations: [
-      { conversationId: 'a1b2c3d4e5', model: 'claude-opus-4', length: 142000, cost: 5200, uncachedCost: 8100, conversationIsCachedUntil: now + 9 * 60000, lastMessageTimestamp: now - 30 * 60000, orgId: 'org-personal' },
-      { conversationId: 'f6g7h8i9j0', model: 'claude-sonnet-4', length: 64000, cost: 1400, uncachedCost: 2100, conversationIsCachedUntil: null, lastMessageTimestamp: now - 3 * H, orgId: 'org-personal' },
-      { conversationId: 'k1l2m3n4o5', model: 'claude-opus-4', length: 38000, cost: 900, uncachedCost: 1300, conversationIsCachedUntil: now + 4 * 60000, lastMessageTimestamp: now - 5 * H, orgId: 'org-personal' },
-    ],
+    conversations,
   };
   require('fs').writeFileSync(filePath, JSON.stringify(snapshot));
 }

@@ -14,7 +14,8 @@ function getToday(daily) {
   if (!daily || daily.length === 0) return { tokens: 0, cost: 0 };
   const todayKey = new Date().toLocaleDateString('en-CA');
   const entry = daily.find(d => d.date === todayKey);
-  return entry ? { tokens: entry.totalTokens, cost: entry.estimatedCostUSD } : { tokens: 0, cost: 0 };
+  // Web daily entries use `tokens`; Claude/Gemini daily entries use `totalTokens`.
+  return entry ? { tokens: entry.totalTokens || entry.tokens || 0, cost: entry.estimatedCostUSD || 0 } : { tokens: 0, cost: 0 };
 }
 
 async function scan(settings) {
@@ -38,13 +39,23 @@ async function scan(settings) {
 
   const claudeToday = getToday(claude.daily);
   const geminiToday = getToday(gemini.daily);
+  const webToday = getToday(web.daily);
+
+  const claudeCost = claude.estimatedCostUSD || 0;
+  const geminiCost = gemini.estimatedCostUSD || 0;
+  const webCost = web.estimatedCostUSD || 0;
 
   const combined = {
     totalTokens: (claude.totalTokens || 0) + (gemini.totalTokens || 0),
-    estimatedCostUSD: (claude.estimatedCostUSD || 0) + (gemini.estimatedCostUSD || 0),
+    estimatedCostUSD: claudeCost + geminiCost,
     activeCLIs: [claude.available, gemini.available].filter(Boolean).length,
-    todayTokens: claudeToday.tokens + geminiToday.tokens,
-    todayCost: claudeToday.cost + geminiToday.cost,
+    todayTokens: claudeToday.tokens + geminiToday.tokens + webToday.tokens,
+    todayCost: claudeToday.cost + geminiToday.cost + webToday.cost,
+    claudeCost,
+    geminiCost,
+    webCost,
+    totalCost: claudeCost + geminiCost + webCost,
+    webTokens: web.totalTokens || web.conversationTokens || 0,
   };
 
   return {

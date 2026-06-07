@@ -20,8 +20,23 @@ gen(claudeProjects);
 const webUsageFile = path.join(fixHome, 'web-usage.json');
 genWebUsage(webUsageFile);
 
-const settings = { refreshInterval: 0, lookbackDays: 14, claudePath: claudeProjects, geminiPath: '', webPath: webUsageFile, idleTimeout: 0, dailyCostAlert: 0 };
-ipcMain.handle('get-usage-data', async () => scan(settings));
+const settings = { refreshInterval: 0, lookbackDays: 14, claudePath: claudeProjects, geminiPath: '', webPath: webUsageFile, idleTimeout: 0, dailyCostAlert: 0, appTheme: 'tokenmeter' };
+// Mimic main.js's live-session annotation: mark ONLY the most-recently-modified
+// root session as running. This proves "active" is process-driven, not mtime-driven —
+// the second-most-recent session also has a fresh mtime but must stay hidden.
+ipcMain.handle('get-usage-data', async () => {
+  const data = await scan(settings);
+  if (data.claude && Array.isArray(data.claude.sessions)) {
+    data.claude.runningDetection = true;
+    const newest = data.claude.sessions.slice().sort((a, b) => b.mtime - a.mtime)[0];
+    const runId = newest ? newest.id : null;
+    for (const s of data.claude.sessions) {
+      s.running = s.id === runId;
+      for (const c of (s.childSessions || [])) c.running = s.running;
+    }
+  }
+  return data;
+});
 ipcMain.handle('get-settings', () => settings);
 for (const c of ['save-settings', 'window-minimize', 'window-maximize', 'window-close', 'open-external', 'show-notification']) {
   ipcMain.handle(c, () => true);
@@ -65,16 +80,22 @@ app.whenReady().then(async () => {
   rec('cache trend chart canvas present',
     (await $(win, "!!document.getElementById('chart-cache-trend')")) === true);
 
-  // 3. Sessions tab — defaults to live (active) sessions only
+  // 3. Sessions tab — defaults to live (active = running process) sessions only
   await $(win, "navigate('sessions');1"); await wait(500);
-  const liveWins = await $(win, "document.querySelectorAll('#hypr-root .hypr-win').length");
-  rec('default view renders live sessions', liveWins > 0, `${liveWins} live`);
-  rec('default view shows only active sessions',
-    (await $(win, "[...document.querySelectorAll('#hypr-root .hypr-win')].every(w=>w.classList.contains('active'))")) === true);
+  const live = await $(win, `(function(){
+    return {
+      wins: document.querySelectorAll('#hypr-root .hypr-win').length,
+      branches: document.querySelectorAll('#hypr-root .hypr-branch').length,
+      allActive: [...document.querySelectorAll('#hypr-root .hypr-win')].every(w=>w.classList.contains('active')),
+      children: document.querySelectorAll('#hypr-root .hypr-child').length,
+    };
+  })()`);
+  rec('default view renders the running session', live.wins > 0, `${live.wins} wins`);
+  rec('only running sessions shown (recent-but-not-running hidden)', live.branches === 1, `${live.branches} root(s)`);
+  rec('every shown session is marked active', live.allActive === true);
   rec('waybar present',
     (await $(win, "!!document.querySelector('#hypr-root .hypr-bar')")) === true);
-  rec('spawned sub-agent renders as a child window',
-    (await $(win, "document.querySelectorAll('#hypr-root .hypr-child').length")) > 0, '');
+  rec('spawned sub-agent renders as a child window', live.children > 0, `${live.children}`);
 
   // 3b. Toggle reveals closed sessions, which carry a short summary line.
   const toggled = await $(win, `(function(){
@@ -103,12 +124,19 @@ app.whenReady().then(async () => {
   const closed = await $(win, "document.getElementById('hypr-detail-x').click(); !document.getElementById('hypr-detail').classList.contains('open')");
   rec('close button hides the detail panel', closed === true);
 
-  // 4b. Theme switcher repaints the scoped palette.
-  const themed = await $(win, `(function(){
-    var sel=document.getElementById('hypr-theme-sel'); sel.value='gruvbox'; sel.dispatchEvent(new Event('change',{bubbles:true}));
-    return document.getElementById('hypr-root').dataset.hyprTheme==='gruvbox';
+  // 4b. Theme switch in Settings repaints the WHOLE app via :root vars.
+  await $(win, `(function(){
+    openSettings();
+    document.getElementById('s-theme').value='gruvbox';
+    document.getElementById('s-save').click();
+  })();1`);
+  await wait(600);
+  const themeOk = await $(win, `(function(){
+    var ds=document.documentElement.dataset.theme;
+    var bg=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim().toLowerCase();
+    return ds==='gruvbox' && bg==='#282828';
   })()`);
-  rec('theme switcher applies a theme', themed === true);
+  rec('Settings theme switch recolors whole app (:root)', themeOk === true);
 
   // 5. Workspace filter narrows the grid to a single project (section headers drop).
   const narrowed = await $(win, `(function(){

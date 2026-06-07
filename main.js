@@ -5,6 +5,7 @@ const { execFile, spawn } = require('child_process');
 const Store = require('electron-store');
 const { scan } = require('./src/scanner');
 const { SUMMARY_MARKER } = require('./src/claude-parser');
+const { getLiveSessionIds } = require('./src/live-sessions');
 
 const store = new Store({ name: 'tokenmeter-config' });
 
@@ -12,6 +13,7 @@ let mainWindow = null;
 let tray = null;
 let refreshTimer = null;
 let lastUsageData = null;
+let liveCache = { t: 0, ids: new Set(), available: false };
 
 const DEFAULT_SETTINGS = {
   refreshInterval: 60,
@@ -21,6 +23,7 @@ const DEFAULT_SETTINGS = {
   idleTimeout: 60,
   openAtLogin: false,
   dailyCostAlert: 0,
+  appTheme: 'tokenmeter',    // App-level UI theme
   sessionTheme: 'nord',      // Hyprland theme for the Sessions overview surface
   sessionsShowClosed: false, // Sessions view: show ended sessions too (default: live only)
   sessionSummaries: true,    // Generate closed-session summaries via the local `claude -p` CLI
@@ -59,15 +62,28 @@ function createTray() {
 }
 
 function getSettings() {
-  return { ...DEFAULT_SETTINGS, ...store.get('settings', {}) };
+  const stored = store.get('settings', {});
+  const merged = { ...DEFAULT_SETTINGS, ...stored };
+  if (!stored.appTheme && stored.sessionTheme) merged.appTheme = stored.sessionTheme;
+  return merged;
 }
 
 function createWindow() {
+  const saved = store.get('windowBounds');
+  const boundsOpts = {};
+  if (saved) {
+    if (Number.isFinite(saved.width) && saved.width >= 720) boundsOpts.width = saved.width;
+    if (Number.isFinite(saved.height) && saved.height >= 560) boundsOpts.height = saved.height;
+    if (Number.isFinite(saved.x)) boundsOpts.x = saved.x;
+    if (Number.isFinite(saved.y)) boundsOpts.y = saved.y;
+  }
+
   mainWindow = new BrowserWindow({
-    width: 720,
-    height: 600,
-    minWidth: 580,
-    minHeight: 480,
+    width: 1100,
+    height: 780,
+    minWidth: 720,
+    minHeight: 560,
+    ...boundsOpts,
     frame: false,
     backgroundColor: '#07070d',
     webPreferences: {
@@ -85,6 +101,23 @@ function createWindow() {
     mainWindow.show();
   });
 
+  let boundsTimer = null;
+  const saveBounds = () => {
+    if (boundsTimer) clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
+        store.set('windowBounds', mainWindow.getBounds());
+      }
+    }, 400);
+  };
+  mainWindow.on('resize', saveBounds);
+  mainWindow.on('move', saveBounds);
+  mainWindow.on('close', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
+      store.set('windowBounds', mainWindow.getBounds());
+    }
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -92,6 +125,27 @@ async function runScan() {
   const settings = getSettings();
   try {
     const data = await scan(settings);
+
+    // Annotate sessions with live (running) detection — cached ~5s
+    try {
+      const userProfile = process.env.USERPROFILE || os.homedir();
+      const claudeHome = settings.claudePath
+        ? path.dirname(settings.claudePath)
+        : path.join(userProfile, '.claude');
+      if (Date.now() - liveCache.t > 5000) {
+        try {
+          liveCache = { t: Date.now(), ...getLiveSessionIds({ claudeHome }) };
+        } catch (_) {}
+      }
+      if (data && data.claude && data.claude.available !== false) {
+        data.claude.runningDetection = liveCache.available;
+        for (const s of (data.claude.sessions || [])) {
+          s.running = liveCache.ids.has(s.id);
+          for (const c of (s.childSessions || [])) c.running = s.running;
+        }
+      }
+    } catch (_) {}
+
     lastUsageData = data;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('usage-updated', data);

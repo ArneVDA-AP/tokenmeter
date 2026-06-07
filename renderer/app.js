@@ -93,36 +93,43 @@ function navigate(pageId) {
   }
 }
 
+// ── Theme Color Helpers ────────────────────────────────────────────────────
+function themeColor(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#e8650a'; }
+function hexToRgba(hex, a) { const h = hex.replace('#',''); const n = h.length===3 ? h.split('').map(c=>c+c).join('') : h; const num = parseInt(n,16); return `rgba(${(num>>16)&255},${(num>>8)&255},${num&255},${a})`; }
+function accentRgba(a) { const c = themeColor('--orange'); return c.startsWith('#') ? hexToRgba(c, a) : c; }
+
 // ── Chart Helpers ──────────────────────────────────────────────────────────
-const CHART_DEFAULTS = {
-  responsive: true,
-  maintainAspectRatio: true,
-  animation: { duration: 400 },
-  plugins: { legend: { display: false }, tooltip: {
-    backgroundColor: '#1e1e1e',
-    borderColor: '#3d3d3d',
-    borderWidth: 1,
-    titleFont: { family: "'Space Mono', monospace", size: 9 },
-    bodyFont:  { family: "'Space Mono', monospace", size: 10 },
-    callbacks: { label: ctx => ` ${fmtTokens(ctx.raw)} tokens` },
-  }},
-  scales: {
-    x: {
-      stacked: true,
-      grid: { color: '#2e2e2e' },
-      ticks: { color: '#525252', font: { family: "'Space Mono', monospace", size: 9 } },
-    },
-    y: {
-      stacked: true,
-      grid: { color: '#2e2e2e' },
-      ticks: {
-        color: '#525252',
-        font: { family: "'Space Mono', monospace", size: 9 },
-        callback: v => fmtTokens(v),
+function getChartDefaults() {
+  return {
+    responsive: true,
+    maintainAspectRatio: true,
+    animation: { duration: 400 },
+    plugins: { legend: { display: false }, tooltip: {
+      backgroundColor: themeColor('--surface'),
+      borderColor: themeColor('--border-hi'),
+      borderWidth: 1,
+      titleFont: { family: "'Space Mono', monospace", size: 9 },
+      bodyFont:  { family: "'Space Mono', monospace", size: 10 },
+      callbacks: { label: ctx => ` ${fmtTokens(ctx.raw)} tokens` },
+    }},
+    scales: {
+      x: {
+        stacked: true,
+        grid: { color: themeColor('--border') },
+        ticks: { color: themeColor('--text-dim'), font: { family: "'Space Mono', monospace", size: 9 } },
+      },
+      y: {
+        stacked: true,
+        grid: { color: themeColor('--border') },
+        ticks: {
+          color: themeColor('--text-dim'),
+          font: { family: "'Space Mono', monospace", size: 9 },
+          callback: v => fmtTokens(v),
+        },
       },
     },
-  },
-};
+  };
+}
 
 function makeBarChart(canvasId, labels, datasets) {
   const canvas = document.getElementById(canvasId);
@@ -131,7 +138,7 @@ function makeBarChart(canvasId, labels, datasets) {
   charts[canvasId] = new Chart(canvas, {
     type: 'bar',
     data: { labels, datasets },
-    options: JSON.parse(JSON.stringify(CHART_DEFAULTS)),
+    options: getChartDefaults(), // fresh object per call; keep fn callbacks (JSON-clone would strip them)
   });
   return charts[canvasId];
 }
@@ -139,7 +146,7 @@ function makeBarChart(canvasId, labels, datasets) {
 function dailyLabels(daily) { return daily.map(d => d.label); }
 
 // Line chart for a 0–100% series (e.g. cache hit rate). Built explicitly rather
-// than via CHART_DEFAULTS so the %-axis tick + tooltip callbacks survive.
+// than via getChartDefaults() so the %-axis tick + tooltip callbacks survive.
 function makeCacheTrendChart(canvasId, labels, data) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
@@ -150,8 +157,8 @@ function makeCacheTrendChart(canvasId, labels, data) {
     type: 'line',
     data: { labels, datasets: [{
       data,
-      borderColor: 'rgba(232,101,10,0.85)',
-      backgroundColor: 'rgba(232,101,10,0.12)',
+      borderColor: accentRgba(0.85),
+      backgroundColor: accentRgba(0.12),
       fill: true, tension: 0.3, pointRadius: 0, borderWidth: 1.5,
       spanGaps: false, // idle days are null → render as gaps, not a dive to 0%
     }] },
@@ -161,15 +168,15 @@ function makeCacheTrendChart(canvasId, labels, data) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1e1e1e', borderColor: '#3d3d3d', borderWidth: 1,
+          backgroundColor: themeColor('--surface'), borderColor: themeColor('--border-hi'), borderWidth: 1,
           titleFont: mono9, bodyFont: mono10,
           callbacks: { label: ctx => ` ${(+ctx.raw).toFixed(1)}% cached` },
         },
       },
       scales: {
-        x: { grid: { color: '#2e2e2e' }, ticks: { color: '#525252', font: mono9 } },
-        y: { min: 0, max: 100, grid: { color: '#2e2e2e' },
-             ticks: { color: '#525252', font: mono9, callback: v => v + '%' } },
+        x: { grid: { color: themeColor('--border') }, ticks: { color: themeColor('--text-dim'), font: mono9 } },
+        y: { min: 0, max: 100, grid: { color: themeColor('--border') },
+             ticks: { color: themeColor('--text-dim'), font: mono9, callback: v => v + '%' } },
       },
     },
   });
@@ -219,7 +226,7 @@ function renderPeakHours(hourly) {
       labels: hourly.map((_, i) => i % 6 === 0 ? `${i}h` : ''),
       datasets: [{
         data: hourly,
-        backgroundColor: hourly.map(v => `rgba(232,101,10,${(0.15 + (v / maxH) * 0.75).toFixed(2)})`),
+        backgroundColor: hourly.map(v => accentRgba((0.15 + (v / maxH) * 0.75).toFixed(2))),
         borderRadius: 2, borderSkipped: false,
       }],
     },
@@ -229,7 +236,7 @@ function renderPeakHours(hourly) {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1e1e1e', borderColor: '#3d3d3d', borderWidth: 1,
+          backgroundColor: themeColor('--surface'), borderColor: themeColor('--border-hi'), borderWidth: 1,
           titleFont: { family: "'Space Mono', monospace", size: 9 },
           bodyFont:  { family: "'Space Mono', monospace", size: 10 },
           callbacks: {
@@ -239,8 +246,8 @@ function renderPeakHours(hourly) {
         },
       },
       scales: {
-        x: { grid: { color: '#2e2e2e' }, ticks: { color: '#525252', font: { family: "'Space Mono', monospace", size: 9 } } },
-        y: { grid: { color: '#2e2e2e' }, ticks: { color: '#525252', font: { family: "'Space Mono', monospace", size: 9 }, callback: v => fmtTokens(v) } },
+        x: { grid: { color: themeColor('--border') }, ticks: { color: themeColor('--text-dim'), font: { family: "'Space Mono', monospace", size: 9 } } },
+        y: { grid: { color: themeColor('--border') }, ticks: { color: themeColor('--text-dim'), font: { family: "'Space Mono', monospace", size: 9 }, callback: v => fmtTokens(v) } },
       },
     },
   });
@@ -262,7 +269,7 @@ function drawSparkline(canvas, data) {
     const y = h - (data[i] / max) * h * 0.88 - 1;
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
-  ctx.strokeStyle = 'rgba(232,101,10,0.8)';
+  ctx.strokeStyle = accentRgba(0.8);
   ctx.lineWidth = 1.5;
   ctx.lineJoin = 'round';
   ctx.stroke();
@@ -270,7 +277,7 @@ function drawSparkline(canvas, data) {
   ctx.lineTo((data.length - 1) * step, h);
   ctx.lineTo(0, h);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(232,101,10,0.12)';
+  ctx.fillStyle = accentRgba(0.12);
   ctx.fill();
 }
 
@@ -329,8 +336,8 @@ function renderOverview(data) {
   // Daily chart (Claude only)
   const daily = claude.daily || [];
   makeBarChart('chart-combined-daily', dailyLabels(daily), [
-    { label: 'Input',  data: daily.map(d => d.inputTokens),  backgroundColor: 'rgba(212,162,122,0.5)',  borderRadius: 3, borderSkipped: false },
-    { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: 'rgba(212,162,122,0.85)', borderRadius: 3, borderSkipped: false },
+    { label: 'Input',  data: daily.map(d => d.inputTokens),  backgroundColor: accentRgba(0.45),  borderRadius: 3, borderSkipped: false },
+    { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: accentRgba(0.85), borderRadius: 3, borderSkipped: false },
   ]);
 }
 
@@ -372,8 +379,8 @@ function renderClaude(data) {
   // Daily chart
   const daily = cl.daily || [];
   makeBarChart('chart-claude-daily', dailyLabels(daily), [
-    { label: 'Input',  data: daily.map(d => d.inputTokens),  backgroundColor: 'rgba(212,162,122,0.5)',  borderRadius: 3, borderSkipped: false },
-    { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: 'rgba(212,162,122,0.85)', borderRadius: 3, borderSkipped: false },
+    { label: 'Input',  data: daily.map(d => d.inputTokens),  backgroundColor: accentRgba(0.45),  borderRadius: 3, borderSkipped: false },
+    { label: 'Output', data: daily.map(d => d.outputTokens), backgroundColor: accentRgba(0.85), borderRadius: 3, borderSkipped: false },
   ]);
 
   // Cache hit trend: cacheRead / (cacheRead + input + cacheWrite) per day.
@@ -471,7 +478,6 @@ let hyprFilter = 'all';   // 'all' or a workspace id
 let hyprFocused = null;   // focused/selected session id
 let hyprDetailId = null;  // session id whose detail panel is open
 let hyprExpo = false;     // expo (workspace overview) open?
-let hyprTheme = 'nord';
 let hyprShowClosed = false; // false → only live sessions; true → also show ended ones
 
 function escHtml(s) {
@@ -479,10 +485,9 @@ function escHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 function hyprIsActive(s) {
-  // Use the file's last write (mtime), not just the last usage record: a session
-  // mid-long-generation hasn't written a new assistant/usage record yet, but its
-  // .jsonl is still being appended to, so mtime is the truer "is it running" signal.
-  return (Date.now() - Math.max(s.mtime || 0, s.endTime || 0)) < HYPR_ACTIVE_MS;
+  const cl = usageData?.claude;
+  if (cl && cl.runningDetection) return s.running === true;          // strict: terminal open, no time limit
+  return (Date.now() - Math.max(s.mtime || 0, s.endTime || 0)) < HYPR_ACTIVE_MS; // fallback when detection unavailable
 }
 function hyprShortId(id) {
   const base = String(id || '').replace(/~a\d+$/, '');
@@ -588,7 +593,6 @@ function renderSessions(data) {
   const cl = data?.claude;
   const rootEl = document.getElementById('hypr-root');
   if (!rootEl) return;
-  applyHyprTheme(rootEl, hyprTheme);
 
   const roots = cl?.sessions || [];
   const workspaces = cl?.workspaces || [];
@@ -619,14 +623,11 @@ function hyprWaybar(workspaces, roots, cl, activeCount) {
       <span class="ix">${ws.id}</span>${escHtml(ws.name)}
       ${hyprWsHasActive(roots, ws.id) ? '<span class="hypr-pulse"></span>' : ''}
     </div>`).join('');
-  const themeOpts = HYPR_THEME_ORDER.map(k =>
-    `<option value="${k}" ${k === hyprTheme ? 'selected' : ''}>${HYPR_THEMES[k].label}</option>`).join('');
   return `
     <div class="hypr-bar">
       <div style="display:flex;gap:2px;align-items:center">${pills}</div>
       <div class="hypr-bar-title"><b>tokenmeter</b><span class="sep">—</span>session overview</div>
       <div class="hypr-bar-right">
-        <select class="hypr-theme-sel" id="hypr-theme-sel" title="Theme">${themeOpts}</select>
         <div class="hypr-mod btn ${hyprShowClosed ? '' : 'on'}" data-toggle-closed="1" title="${hyprShowClosed ? 'Showing all sessions — click for live only' : 'Showing live sessions only — click to include closed'}"><span>${hyprShowClosed ? '◌' : '◉'}</span><span>${hyprShowClosed ? 'all' : 'live only'}</span></div>
         <div class="hypr-mod btn ${hyprExpo ? 'on' : ''}" data-expo="1" title="Workspace overview (\`)"><span>▦</span><span>expo</span></div>
         <div class="hypr-mod"><span class="tok">◆</span><span>${cl?.totalSessions || 0} sessions</span><span class="cost">${noTilde(cl?.estimatedCostUSD || 0)}</span></div>
@@ -1012,6 +1013,7 @@ async function openSettings() {
   document.getElementById('s-idle-timeout').value = settings.idleTimeout || 60;
   document.getElementById('s-cost-alert').value   = settings.dailyCostAlert || 0;
   document.getElementById('s-session-summaries').value = settings.sessionSummaries === false ? '0' : '1';
+  document.getElementById('s-theme').value = settings.appTheme || settings.sessionTheme || 'tokenmeter';
   document.getElementById('settings-overlay').classList.add('visible');
 }
 
@@ -1028,13 +1030,16 @@ async function saveSettings() {
     idleTimeout:     parseInt(document.getElementById('s-idle-timeout').value),
     dailyCostAlert:  parseFloat(document.getElementById('s-cost-alert').value) || 0,
     sessionSummaries: document.getElementById('s-session-summaries').value === '1',
+    appTheme:        document.getElementById('s-theme').value,
   };
   await tm.saveSettings(settings);
   currentSettings = { ...currentSettings, ...settings };
   if (settings.sessionSummaries) hyprSummariesAvailable = true; // re-probe if re-enabled
   idleTimeout = (settings.idleTimeout || 60) * 1000;
   resetIdleTimer();
+  window.applyTheme(settings.appTheme);
   closeSettings();
+  if (usageData) render(usageData);
   await refresh();
 }
 
@@ -1076,16 +1081,9 @@ async function init() {
     if (e.target === document.getElementById('settings-overlay')) closeSettings();
   });
 
-  // Sessions surface (Hyprland overview) — delegated clicks + theme switch.
+  // Sessions surface (Hyprland overview) — delegated clicks.
   const hyprRootEl = document.getElementById('hypr-root');
   hyprRootEl.addEventListener('click', hyprHandleClick);
-  hyprRootEl.addEventListener('change', e => {
-    if (e.target.id === 'hypr-theme-sel') {
-      hyprTheme = e.target.value;
-      applyHyprTheme(hyprRootEl, hyprTheme);
-      tm.saveSettings({ sessionTheme: hyprTheme }).catch(() => {});
-    }
-  });
 
   // Dismiss idle on click anywhere in content
   document.getElementById('main-content').addEventListener('click', () => { if (isIdle) dismissIdle(); });
@@ -1104,8 +1102,8 @@ async function init() {
     const settings = await tm.getSettings();
     currentSettings = settings;
     idleTimeout = (settings.idleTimeout || 60) * 1000;
-    if (settings.sessionTheme && HYPR_THEMES[settings.sessionTheme]) hyprTheme = settings.sessionTheme;
     if (typeof settings.sessionsShowClosed === 'boolean') hyprShowClosed = settings.sessionsShowClosed;
+    window.applyTheme(settings.appTheme || settings.sessionTheme || 'tokenmeter');
   } catch { /* use default */ }
 
   // Initial data load

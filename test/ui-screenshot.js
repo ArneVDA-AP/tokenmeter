@@ -27,11 +27,23 @@ genWebUsage(webUsageFile);
 const settings = {
   refreshInterval: 0, lookbackDays: 14,
   claudePath: claudeProjects, geminiPath: '', webPath: webUsageFile,
-  idleTimeout: 0, dailyCostAlert: 0,
+  idleTimeout: 0, dailyCostAlert: 0, appTheme: 'tokenmeter',
 };
 
-// Minimal IPC stand-ins matching preload.js / main.js.
-ipcMain.handle('get-usage-data', async () => scan(settings));
+// Minimal IPC stand-ins matching preload.js / main.js. Annotate running sessions
+// (mimic main.js) so the live view shows the active fixtures.
+ipcMain.handle('get-usage-data', async () => {
+  const data = await scan(settings);
+  if (data.claude && Array.isArray(data.claude.sessions)) {
+    data.claude.runningDetection = true;
+    const now = Date.now();
+    for (const s of data.claude.sessions) {
+      s.running = (now - Math.max(s.mtime || 0, s.endTime || 0)) < 10 * 60 * 1000;
+      for (const c of (s.childSessions || [])) c.running = s.running;
+    }
+  }
+  return data;
+});
 ipcMain.handle('get-settings', () => settings);
 ipcMain.handle('save-settings', () => true);
 ipcMain.handle('window-minimize', () => {});
@@ -92,8 +104,15 @@ app.whenReady().then(async () => {
   await wait(900); await shot(state && state.ok ? '4-session-detail' : '4-session-detail-FAIL');
 
   // Expo (workspace overview) capture.
-  await win.webContents.executeJavaScript(`(function(){ hyprDetailId=null; hyprExpo=true; renderSessions(usageData); })();`);
+  await win.webContents.executeJavaScript(`(function(){ hyprDetailId=null; hyprExpo=false; renderSessions(usageData); })();`);
+  await win.webContents.executeJavaScript(`(function(){ hyprExpo=true; renderSessions(usageData); })();`);
   await wait(700); await shot('3b-expo');
+
+  // Themed capture — verify app-wide theming recolors chrome, charts AND heatmap.
+  win.setContentSize(860, 2000); await wait(300);
+  await win.webContents.executeJavaScript("hyprExpo=false; window.applyTheme('nord');1");
+  await go('overview'); await wait(800); await shot('6-overview-nord');
+  await go('claude');   await wait(1000); await shot('7-claude-nord');
 
   fs.rmSync(fixHome, { recursive: true, force: true });
   app.quit();

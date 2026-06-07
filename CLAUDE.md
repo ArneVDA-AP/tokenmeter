@@ -10,12 +10,13 @@ Tokenmeter is a Windows Electron desktop app that reads local Claude Code JSONL 
 | `main.js` | Electron main: file I/O, IPC handlers, auto-refresh timer, system tray, native notifications |
 | `preload.js` | contextBridge — exposes safe `window.tokenmeter` API to renderer |
 | `renderer/index.html` | App shell: title bar, overview page, Claude detail page, bottom nav, settings modal, toast |
-| `renderer/styles.css` | All styles — neutral grays + orange (#e8650a). EXCEPTION: the Sessions surface (`.hypr-*`) is themed via scoped `--h-*` vars (Hyprland palettes, blue/purple allowed there only) |
-| `renderer/hypr-themes.js` | 5 Hyprland theme palettes (Nord/Everforest/Gruvbox/Macchiato/Rosé Pine) + `applyHyprTheme(el, key)` — sets `--h-*` vars on the Sessions surface |
-| `renderer/app.js` | UI logic: routing, charts, heatmap, sparklines, cost alert, idle timer, Hyprland session overview (waybar/strip/grid/detail/expo) |
-| `renderer/animations.js` | PixelEngine (inlined) + all 7 creature presets + cycling controller |
+| `renderer/styles.css` | All styles — fully theme-driven via CSS custom properties on `:root` (app vars `--bg/--surface/--text/--orange/…` + Sessions `--h-*`). Defaults to the `tokenmeter` palette; `applyTheme()` overrides at runtime |
+| `renderer/hypr-themes.js` | App-wide theme system: 6 palettes (Tokenmeter + Nord/Everforest/Gruvbox/Macchiato/Rosé Pine), `APP_THEMES`/`APP_THEME_ORDER`, and `applyTheme(key)` — sets both app vars and `--h-*` on `:root`. `applyHyprTheme` kept as a back-compat alias |
+| `renderer/app.js` | UI logic: routing, charts (theme-driven colors via `themeColor()`), heatmap, sparklines, cost alert, idle timer, Hyprland session overview (waybar/strip/grid/detail/expo) |
+| `renderer/animations.js` | PixelEngine (inlined) + all 7 creature presets + cycling controller (creature color = `var(--creature)`) |
 | `src/scanner.js` | Orchestrates Claude + Gemini parsers, builds `combined` totals |
 | `src/claude-parser.js` | Parses `.jsonl`; aggregates tokens/cost/daily/hourly/heatmap/sparklines; builds per-session terminal previews + sub-agent (sidechain) child sessions + workspaces |
+| `src/live-sessions.js` | `getLiveSessionIds()` — which sessions have a running Claude process (open terminal): reads `~/.claude/sessions/<pid>.json` + PID-liveness, unions `claude agents --json`. Used by `main.js` to flag `running` sessions |
 | `src/gemini-parser.js` | Parses Gemini session files (backend ready, UI hidden) |
 | `src/pricer.js` | Cost calculation via `pricing.json` pattern matching; `calcCacheSavings()` |
 | `pricing.json` | User-editable model pricing table |
@@ -29,9 +30,9 @@ Tokenmeter is a Windows Electron desktop app that reads local Claude Code JSONL 
 - Claude projects folder uses `--` as path separator in folder names
 - All cost estimates labelled as `~$` throughout the UI
 - `LOOKBACK_DAYS = 90` in parsers — skip files older than 90 days
-- No blue tints in UI — palette is neutral grays + orange. ONE EXCEPTION: the Sessions overview (`.hypr-root` and descendants) uses the Hyprland theme system via `--h-*` vars, which includes blue/purple themes. Keep that theming scoped to `.hypr-*`; never leak `--h-*` to the rest of the app.
+- App-wide theme system: the whole UI is driven by CSS vars on `:root`, set by `applyTheme(key)` (`hypr-themes.js`). The default `tokenmeter` theme reproduces the original neutral-gray + orange look; the other 5 are Hyprland palettes (blue/purple allowed — themes are global now). Selectable in **Settings** (`#s-theme`, persisted as `appTheme`). Don't hardcode colors — use the CSS vars (or `themeColor()` in charts) so everything recolors.
 - Cache hit % = `read / (read + write + input)`. Cache *writes* (first-time misses) and plain input both belong in the denominator — omitting writes pins the metric at ~100% in real logs. See `cacheHitPct()` in `claude-parser.js`.
-- "Active" session = last activity within `HYPR_ACTIVE_MS` (10 min), a proxy for a running Claude Code terminal. Computed in `app.js` from `max(mtime, endTime)` — the file's last write (mtime) is the truer "running" signal, since a session mid-long-generation hasn't written a new usage record yet (`endTime` lags).
+- "Active" session = its Claude Code terminal/process is **currently running** — detected in `main.js` via `getLiveSessionIds()` (`src/live-sessions.js`) and surfaced as `session.running` + `claude.runningDetection`. NOT a time heuristic: a session stays active for as long as its terminal is open, regardless of idle time. `hyprIsActive()` in `app.js` uses `running` when `runningDetection` is true, else falls back to the old `max(mtime,endTime) < HYPR_ACTIVE_MS` (10 min) for older Claude versions that lack the live signal.
 
 ## Data Sources
 - Claude Code: `%USERPROFILE%\.claude\projects\**\*.jsonl`
@@ -47,10 +48,12 @@ claudePath       — override for Claude projects folder
 geminiPath       — override for Gemini sessions folder
 idleTimeout      — seconds before idle animation triggers (default 60)
 dailyCostAlert   — USD threshold for native cost alert (default 0 = off)
-sessionTheme       — Hyprland theme for the Sessions surface (default 'nord')
+appTheme           — app-wide UI theme (default 'tokenmeter'; migrated from legacy sessionTheme)
+sessionTheme       — legacy Sessions-only theme key (kept for migration to appTheme)
 sessionsShowClosed — Sessions view shows ended sessions too (default false = live only)
 sessionSummaries   — Generate closed-session summaries via local `claude -p` (default true)
 ```
+Window size/position persists via the `windowBounds` electron-store key (default 1100×780).
 
 ## Data Flow: claude-parser.js → scanner.js → IPC → renderer
 `aggregateClaude(claudeDir)` returns:

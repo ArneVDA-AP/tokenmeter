@@ -29,6 +29,14 @@ const DEFAULT_SETTINGS = {
   sessionSummaries: true,    // Generate closed-session summaries via the local `claude -p` CLI
 };
 
+// Theme background colors (mirror of renderer/hypr-themes.js `bg`) so the native
+// window paints the right color before the renderer loads — avoids a dark flash
+// on lighter themes.
+const THEME_BG = {
+  tokenmeter: '#161616', nord: '#2e3440', everforest: '#2d353b',
+  gruvbox: '#282828', macchiato: '#24273a', rosepine: '#232136',
+};
+
 function fmtTokensTray(n) {
   if (!n) return '0';
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -85,7 +93,7 @@ function createWindow() {
     minHeight: 560,
     ...boundsOpts,
     frame: false,
-    backgroundColor: '#07070d',
+    backgroundColor: THEME_BG[getSettings().appTheme] || THEME_BG.tokenmeter,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -129,7 +137,9 @@ async function runScan() {
     // Annotate sessions with live (running) detection — cached ~5s
     try {
       const userProfile = process.env.USERPROFILE || os.homedir();
-      const claudeHome = settings.claudePath
+      // Sessions live in the real ~/.claude/sessions regardless of a custom
+      // projects path; only derive from claudePath when it's a `.../.claude/projects`.
+      const claudeHome = (settings.claudePath && path.basename(settings.claudePath) === 'projects')
         ? path.dirname(settings.claudePath)
         : path.join(userProfile, '.claude');
       if (Date.now() - liveCache.t > 5000) {

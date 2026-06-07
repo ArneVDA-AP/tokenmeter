@@ -532,12 +532,6 @@ body:not(.app-idle) #main-content { opacity: 1; transition: opacity 0.2s; }
 .hypr-mod .tok { color: var(--h-accent); }
 .hypr-mod .cost { color: var(--h-yellow); }
 .hypr-mod .clk { color: var(--h-fg); font-weight: 600; }
-.hypr-theme-sel {
-  background: color-mix(in srgb, var(--h-window) 70%, transparent);
-  color: var(--h-fg-dim); border: 1px solid var(--h-border);
-  border-radius: 4px; font-family: var(--font); font-size: 10px;
-  padding: 3px 6px; cursor: pointer;
-}
 
 /* Workspace strip */
 .hypr-strip { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 10px 0 4px; }

@@ -472,7 +472,8 @@ function renderClaude(data) {
 // ── Render Sessions (Hyprland-style compositor overview) ─────────────────────
 // "Workspaces" = projects; each session is a terminal window; sub-agents spawned
 // inside a session (sidechains) render as indented child windows. Active = the
-// session wrote to its log within HYPR_ACTIVE_MS (a running Claude Code terminal).
+// session's Claude process is running (via runningDetection); HYPR_ACTIVE_MS is
+// only the fallback window when live detection is unavailable.
 const HYPR_ACTIVE_MS = 10 * 60 * 1000;
 let hyprFilter = 'all';   // 'all' or a workspace id
 let hyprFocused = null;   // focused/selected session id
